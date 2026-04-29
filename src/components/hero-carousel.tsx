@@ -123,61 +123,102 @@ export default function HeroCarousel() {
       onFocus={() => setPaused(true)}
       onBlur={() => setPaused(false)}
     >
-      {/* Slides (background images, cross-fade) */}
+      {/* Ambient blurred backdrop (hides pixelation by softening the source) */}
       <div className="absolute inset-0">
         {SLIDES.map((s, i) => (
           <div
-            key={s.src}
+            key={`bg-${s.src}`}
             className={`absolute inset-0 transition-opacity duration-1000 ease-in-out ${
               i === index ? "opacity-100" : "opacity-0"
             }`}
-            aria-hidden={i !== index}
+            aria-hidden
           >
             <Image
               src={s.src}
-              alt={s.alt}
+              alt=""
               fill
               priority={i === 0}
               sizes="100vw"
-              className="object-cover object-center"
+              className="object-cover object-center scale-110 blur-2xl opacity-50"
             />
-            {/* Dark gradient overlay for readability */}
-            <div className="absolute inset-0 bg-gradient-to-r from-primary-dark/85 via-primary-dark/65 to-primary-dark/30" />
           </div>
         ))}
+        {/* Brand-tinted overlay for readability */}
+        <div className="absolute inset-0 bg-gradient-to-br from-primary-dark/85 via-primary/70 to-primary-light/60" />
       </div>
 
-      {/* Content */}
-      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24 md:py-32 lg:py-40">
-        <div className="max-w-3xl">
-          <span className="inline-block text-xs font-bold tracking-widest uppercase bg-accent/90 text-primary-dark px-3 py-1 rounded-full">
-            {current.eyebrow}
-          </span>
-          <h1
-            key={`title-${index}`}
-            className="mt-5 text-4xl md:text-5xl lg:text-6xl font-extrabold leading-tight drop-shadow-md animate-[fadeIn_700ms_ease-out]"
-          >
-            {current.title}
-          </h1>
-          <p
-            key={`sub-${index}`}
-            className="mt-6 text-lg md:text-xl text-gray-100 max-w-2xl drop-shadow animate-[fadeIn_900ms_ease-out]"
-          >
-            {current.subtitle}
-          </p>
-          <div className="mt-8 flex flex-col sm:flex-row gap-4">
-            <Link
-              href="/book"
-              className="inline-flex items-center justify-center bg-accent hover:bg-accent-light text-primary-dark font-bold px-8 py-4 rounded-xl text-lg transition-colors shadow-lg"
+      {/* Content grid: text + contained image tile */}
+      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 md:py-24 lg:py-28">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-12 items-center">
+          {/* Text column */}
+          <div className="max-w-2xl">
+            <span
+              key={`eb-${index}`}
+              className="inline-block text-xs font-bold tracking-widest uppercase bg-accent/90 text-primary-dark px-3 py-1 rounded-full animate-[fadeIn_500ms_ease-out]"
             >
-              Book a Ride — $50 per seat
-            </Link>
-            <Link
-              href="/driver"
-              className="inline-flex items-center justify-center border-2 border-white/40 hover:border-accent hover:bg-white/5 text-white font-semibold px-8 py-4 rounded-xl text-lg transition-colors backdrop-blur-sm"
+              {current.eyebrow}
+            </span>
+            <h1
+              key={`title-${index}`}
+              className="mt-5 text-4xl md:text-5xl lg:text-6xl font-extrabold leading-tight drop-shadow-md animate-[fadeIn_700ms_ease-out]"
             >
-              Become a Driver
-            </Link>
+              {current.title}
+            </h1>
+            <p
+              key={`sub-${index}`}
+              className="mt-6 text-lg md:text-xl text-gray-100 max-w-2xl drop-shadow animate-[fadeIn_900ms_ease-out]"
+            >
+              {current.subtitle}
+            </p>
+            <div className="mt-8 flex flex-col sm:flex-row gap-4">
+              <Link
+                href="/book"
+                className="inline-flex items-center justify-center bg-accent hover:bg-accent-light text-primary-dark font-bold px-8 py-4 rounded-xl text-lg transition-colors shadow-lg"
+              >
+                Book a Ride — $50 per seat
+              </Link>
+              <Link
+                href="/driver"
+                className="inline-flex items-center justify-center border-2 border-white/40 hover:border-accent hover:bg-white/5 text-white font-semibold px-8 py-4 rounded-xl text-lg transition-colors backdrop-blur-sm"
+              >
+                Become a Driver
+              </Link>
+            </div>
+          </div>
+
+          {/* Image tile column — contained crop, native aspect, soft halo */}
+          <div className="relative hidden lg:block">
+            <div className="relative aspect-[4/3] w-full max-w-xl mx-auto">
+              {/* Soft accent glow behind the tile */}
+              <div className="absolute -inset-6 rounded-[2rem] bg-accent/20 blur-3xl" aria-hidden />
+              {SLIDES.map((s, i) => (
+                <div
+                  key={`tile-${s.src}`}
+                  className={`absolute inset-0 transition-opacity duration-1000 ease-in-out ${
+                    i === index ? "opacity-100" : "opacity-0"
+                  }`}
+                  aria-hidden={i !== index}
+                >
+                  <div className="relative w-full h-full rounded-3xl overflow-hidden ring-1 ring-white/15 shadow-2xl bg-primary-dark/40">
+                    <Image
+                      src={s.src}
+                      alt={s.alt}
+                      fill
+                      sizes="(min-width: 1024px) 36rem, 100vw"
+                      className="object-cover object-center"
+                    />
+                    {/* Subtle inner vignette to mask edge pixelation */}
+                    <div
+                      className="absolute inset-0 pointer-events-none"
+                      style={{
+                        boxShadow:
+                          "inset 0 0 60px 10px rgba(15,31,51,0.35), inset 0 0 0 1px rgba(255,255,255,0.08)",
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
