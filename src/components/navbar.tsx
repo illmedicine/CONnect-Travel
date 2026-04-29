@@ -6,6 +6,21 @@ import { useState } from "react";
 
 // Keep in sync with `basePath` in next.config.ts (GitHub Pages prefix).
 const LOGO_SRC = "/CONnect-Travel/logo.png";
+const FACEBOOK_URL =
+  "https://www.facebook.com/people/ConNetwork-Travel-NY/61589079325758/";
+
+function FacebookIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className={className}
+      fill="currentColor"
+    >
+      <path d="M22 12.06C22 6.5 17.52 2 12 2S2 6.5 2 12.06c0 5.02 3.66 9.18 8.44 9.94v-7.03H7.9v-2.91h2.54V9.84c0-2.52 1.49-3.91 3.77-3.91 1.09 0 2.24.2 2.24.2v2.47h-1.26c-1.24 0-1.63.78-1.63 1.57v1.89h2.78l-.44 2.91h-2.34V22c4.78-.76 8.44-4.92 8.44-9.94z" />
+    </svg>
+  );
+}
 
 export function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -49,6 +64,16 @@ export function Navbar() {
             >
               Drive With Us
             </Link>
+            <a
+              href={FACEBOOK_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 bg-[#1877F2] hover:bg-[#0f63cf] text-white px-3 py-2 rounded-lg font-semibold transition-colors"
+              aria-label="Follow ConNetwork Travel on Facebook (opens in new tab)"
+            >
+              <FacebookIcon className="w-4 h-4" />
+              <span>Follow</span>
+            </a>
             <Link
               href="/login"
               className="bg-accent hover:bg-accent-light text-primary-dark px-4 py-2 rounded-lg font-semibold transition-colors"
@@ -120,6 +145,16 @@ export function Navbar() {
           >
             Drive With Us
           </Link>
+          <a
+            href={FACEBOOK_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 py-2 text-[#4ea3ff] font-semibold"
+            onClick={() => setMenuOpen(false)}
+          >
+            <FacebookIcon className="w-4 h-4" />
+            <span>Follow on Facebook</span>
+          </a>
           <Link
             href="/login"
             className="block py-2 text-accent font-semibold"
