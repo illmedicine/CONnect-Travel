@@ -4,6 +4,12 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+// GitHub Pages serves the site under /CONnect-Travel. next/image does not
+// auto-prefix basePath for unoptimized static-export images, so prepend it
+// manually. Keep in sync with `basePath` in next.config.ts.
+const BASE_PATH = "/CONnect-Travel";
+const img = (file: string) => `${BASE_PATH}/hero/${file}`;
+
 type Slide = {
   src: string;
   alt: string;
@@ -15,7 +21,7 @@ type Slide = {
 // Slides map to files in /public/hero/. Order = display order.
 const SLIDES: Slide[] = [
   {
-    src: "/hero/Buscommunityphoto.png",
+    src: img("Buscommunityphoto.png"),
     alt: "Community gathered around a CONnect Travel van",
     eyebrow: "Community First",
     title: (
@@ -29,7 +35,7 @@ const SLIDES: Slide[] = [
       "Affordable, shared rides from Buffalo to Western NY correctional facilities — book a seat in minutes.",
   },
   {
-    src: "/hero/drivertablet.png",
+    src: img("drivertablet.png"),
     alt: "Driver reviewing the CONnect Travel trip board on a tablet",
     eyebrow: "For Drivers",
     title: (
@@ -43,7 +49,7 @@ const SLIDES: Slide[] = [
       "See open trips, accept rides, and manage your van — all from one tablet-friendly dashboard.",
   },
   {
-    src: "/hero/ElderlyPickup.png",
+    src: img("ElderlyPickup.png"),
     alt: "Driver helping an elderly passenger board the van",
     eyebrow: "Door-to-Gate Care",
     title: (
@@ -57,7 +63,7 @@ const SLIDES: Slide[] = [
       "Verified drivers help every passenger — from grandparents to young families — get to the gate safely.",
   },
   {
-    src: "/hero/busstopdrivers.png",
+    src: img("busstopdrivers.png"),
     alt: "CONnect Travel drivers ready at the pickup stop",
     eyebrow: "Verified Drivers",
     title: (
@@ -71,7 +77,7 @@ const SLIDES: Slide[] = [
       "Every $50 seat is held in smart escrow until your trip is confirmed — 100% refund if no driver accepts.",
   },
   {
-    src: "/hero/ConNetworkQRTIX.png",
+    src: img("ConNetworkQRTIX.png"),
     alt: "CONnect Travel digital ticket with QR code",
     eyebrow: "Paperless Boarding",
     title: (
