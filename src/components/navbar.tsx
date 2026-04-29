@@ -1,7 +1,11 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
+
+// Keep in sync with `basePath` in next.config.ts (GitHub Pages prefix).
+const LOGO_SRC = "/CONnect-Travel/logo.png";
 
 export function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -11,11 +15,15 @@ export function Navbar() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
-          <Link href="/" className="flex items-center gap-2 font-bold text-xl">
-            <span className="text-accent text-2xl">🚐</span>
-            <span>
-              Con<span className="text-accent">Network</span> Travel
-            </span>
+          <Link href="/" className="flex items-center gap-2 font-bold text-xl" aria-label="ConNetwork Travel — Home">
+            <Image
+              src={LOGO_SRC}
+              alt="ConNetwork Travel"
+              width={160}
+              height={40}
+              priority
+              className="h-9 w-auto"
+            />
           </Link>
 
           {/* Desktop nav */}
