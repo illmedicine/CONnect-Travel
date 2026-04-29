@@ -13,16 +13,16 @@ export function Navbar() {
   return (
     <header className="bg-primary text-white shadow-lg sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
+        <div className="flex items-center justify-between h-20">
           {/* Logo */}
-          <Link href="/" className="flex items-center gap-2 font-bold text-xl" aria-label="ConNetwork Travel — Home">
+          <Link href="/" className="flex items-center" aria-label="ConNetwork Travel — Home">
             <Image
               src={LOGO_SRC}
               alt="ConNetwork Travel"
-              width={160}
-              height={40}
+              width={617}
+              height={96}
               priority
-              className="h-9 w-auto"
+              className="h-12 md:h-14 w-auto"
             />
           </Link>
 
