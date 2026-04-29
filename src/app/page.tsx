@@ -3,6 +3,7 @@ import { facilities } from "@/data/facilities";
 import { generalRules } from "@/data/general-rules";
 import HeroCarousel from "@/components/hero-carousel";
 import FacebookFeed from "@/components/facebook-feed";
+import KnowledgeSection from "@/components/knowledge-section";
 
 export default function HomePage() {
   return (
@@ -185,6 +186,9 @@ export default function HomePage() {
           </div>
         </div>
       </section>
+
+      {/* ── Knowledge Center ──────────────────────────────── */}
+      <KnowledgeSection />
 
       {/* ── Facebook Feed ──────────────────────────────────── */}
       <FacebookFeed />
