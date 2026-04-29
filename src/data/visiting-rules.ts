@@ -6,12 +6,17 @@
  * can auto-filter the calendar to valid dates.
  */
 
-import type { VisitingRules } from "./facilities";
+import type { DayOfWeek, Facility, VisitingRules } from "./facilities";
 
 /** Returns true when a given date is a Saturday or Sunday. */
 export function isWeekend(date: Date): boolean {
   const day = date.getDay();
   return day === 0 || day === 6;
+}
+
+/** Returns true if the facility accepts visitors on the given date's weekday. */
+export function isVisitingDay(facility: Facility, date: Date): boolean {
+  return facility.visitingDays.includes(date.getDay() as DayOfWeek);
 }
 
 /**
@@ -64,23 +69,33 @@ function isValidLastNameLetter(lastName: string, date: Date): boolean {
 }
 
 /**
- * Master function: given visiting rules and inmate info, returns whether
+ * Master function: given a facility and inmate info, returns whether
  * a particular date is a valid visiting day.
+ *
+ * Rules layer on top of `facility.visitingDays`:
+ *   – Open visitation: any listed visiting day is valid.
+ *   – DIN/last-name rules: only filter the *weekend* days; weekday visits
+ *     are always open (per DOCCS practice for Wed/Thu visitation).
  */
 export function isValidVisitingDate(
-  rules: VisitingRules,
+  facility: Facility,
   date: Date,
   din?: string,
   lastName?: string
 ): boolean {
-  if (!isWeekend(date)) return false;
+  if (!isVisitingDay(facility, date)) return false;
 
+  // Weekday visits at the multi-day facilities (Wende, Attica, Auburn, Five
+  // Points, Elmira) are open — DIN/last-name filters only apply on weekends.
+  if (!isWeekend(date)) return true;
+
+  const rules: VisitingRules = facility.visitingRules;
   switch (rules.type) {
     case "open":
       return true;
 
     case "din-odd-even":
-      return din ? isValidOddEven(din, date) : true; // if no DIN yet, show all
+      return din ? isValidOddEven(din, date) : true;
 
     case "din-alternating-weekends":
     case "din-alternating-weekends-capped":
@@ -96,10 +111,11 @@ export function isValidVisitingDate(
 
 /**
  * Returns the next N valid visiting dates for a facility, starting from
- * today.
+ * tomorrow. Caps the search to ~120 days to avoid infinite loops if a
+ * facility has no valid days configured.
  */
 export function getNextVisitingDates(
-  rules: VisitingRules,
+  facility: Facility,
   count: number,
   din?: string,
   lastName?: string
@@ -107,14 +123,15 @@ export function getNextVisitingDates(
   const dates: Date[] = [];
   const cursor = new Date();
   cursor.setHours(0, 0, 0, 0);
-  // Start from tomorrow
   cursor.setDate(cursor.getDate() + 1);
 
-  while (dates.length < count) {
-    if (isValidVisitingDate(rules, cursor, din, lastName)) {
+  let safety = 0;
+  while (dates.length < count && safety < 120) {
+    if (isValidVisitingDate(facility, cursor, din, lastName)) {
       dates.push(new Date(cursor));
     }
     cursor.setDate(cursor.getDate() + 1);
+    safety += 1;
   }
 
   return dates;

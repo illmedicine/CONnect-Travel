@@ -37,10 +37,17 @@ export default function FacilitiesPage() {
                   </h2>
                   <p className="text-sm text-gray-500">{f.location}</p>
                 </div>
-                <div className="text-right">
+                <div className="text-right space-y-1">
                   <span className="inline-block bg-accent/10 text-accent font-bold px-3 py-1 rounded-lg text-sm">
-                    ~{f.distanceFromBuffalo} mi from Buffalo
+                    ~{f.distanceFromBuffalo} mi &middot; ~{f.driveTimeFromBuffalo} min
                   </span>
+                  {f.offersWeekdayVisits && (
+                    <div>
+                      <span className="inline-block bg-primary/10 text-primary font-semibold px-3 py-1 rounded-lg text-xs">
+                        Weekday visits available
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -53,12 +60,22 @@ export default function FacilitiesPage() {
                     <strong>Days:</strong> {f.visitingHours.days}
                   </p>
                   <p className="text-sm text-gray-600">
-                    <strong>Time:</strong> {f.visitingHours.start} –{" "}
-                    {f.visitingHours.end}
+                    <strong>{f.visitingHours.weekdayHours ? "Weekend hours:" : "Time:"}</strong>{" "}
+                    {f.visitingHours.start} – {f.visitingHours.end}
                   </p>
+                  {f.visitingHours.weekdayHours && (
+                    <p className="text-sm text-gray-600">
+                      <strong>Weekday hours:</strong>{" "}
+                      {f.visitingHours.weekdayHours.start} –{" "}
+                      {f.visitingHours.weekdayHours.end}
+                    </p>
+                  )}
                   <p className="text-sm text-gray-600">
                     <strong>Latest Arrival:</strong>{" "}
                     {f.visitingHours.latestArrival}
+                    {f.visitingHours.weekdayHours && (
+                      <> (weekday: {f.visitingHours.weekdayHours.latestArrival})</>
+                    )}
                   </p>
                 </div>
                 <div className="bg-surface rounded-xl p-4">

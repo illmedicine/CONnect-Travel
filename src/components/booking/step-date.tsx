@@ -18,7 +18,7 @@ export function StepDate({ data, updateData, onNext, onBack }: Props) {
 
   const validDates = facility
     ? getNextVisitingDates(
-        facility.visitingRules,
+        facility,
         8,
         data.inmateDIN,
         data.inmateLastName
@@ -58,10 +58,23 @@ export function StepDate({ data, updateData, onNext, onBack }: Props) {
       </p>
 
       {facility && (
-        <div className="mb-6 p-3 bg-blue-50 rounded-lg text-sm text-blue-800">
-          <strong>Hours:</strong> {facility.visitingHours.start} –{" "}
-          {facility.visitingHours.end} &middot; Latest arrival:{" "}
-          {facility.visitingHours.latestArrival}
+        <div className="mb-6 p-3 bg-blue-50 rounded-lg text-sm text-blue-800 space-y-1">
+          <div>
+            <strong>Visiting days:</strong> {facility.visitingHours.days}
+          </div>
+          <div>
+            <strong>Weekend hours:</strong> {facility.visitingHours.start} –{" "}
+            {facility.visitingHours.end} &middot; Latest arrival:{" "}
+            {facility.visitingHours.latestArrival}
+          </div>
+          {facility.visitingHours.weekdayHours && (
+            <div>
+              <strong>Weekday hours:</strong>{" "}
+              {facility.visitingHours.weekdayHours.start} –{" "}
+              {facility.visitingHours.weekdayHours.end} &middot; Latest arrival:{" "}
+              {facility.visitingHours.weekdayHours.latestArrival}
+            </div>
+          )}
         </div>
       )}
 
@@ -69,6 +82,7 @@ export function StepDate({ data, updateData, onNext, onBack }: Props) {
         {validDates.map((d) => {
           const iso = d.toISOString();
           const isSelected = data.selectedDate === iso;
+          const isWeekdayVisit = d.getDay() !== 0 && d.getDay() !== 6;
           return (
             <button
               key={iso}
@@ -79,8 +93,15 @@ export function StepDate({ data, updateData, onNext, onBack }: Props) {
                   : "border-gray-100 hover:border-gray-200"
               }`}
             >
-              <div className="font-semibold text-primary-dark">
-                {formatShort(d)}
+              <div className="flex items-center justify-between">
+                <div className="font-semibold text-primary-dark">
+                  {formatShort(d)}
+                </div>
+                {isWeekdayVisit && (
+                  <span className="text-[10px] font-bold uppercase tracking-wider bg-primary/10 text-primary px-2 py-0.5 rounded-full">
+                    Weekday
+                  </span>
+                )}
               </div>
               <div className="text-xs text-gray-500 mt-0.5">
                 {formatDate(d)}
