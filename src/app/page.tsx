@@ -2,6 +2,7 @@ import Link from "next/link";
 import { facilities } from "@/data/facilities";
 import { generalRules } from "@/data/general-rules";
 import HeroCarousel from "@/components/hero-carousel";
+import FacebookFeed from "@/components/facebook-feed";
 
 export default function HomePage() {
   return (
@@ -184,6 +185,9 @@ export default function HomePage() {
           </div>
         </div>
       </section>
+
+      {/* ── Facebook Feed ──────────────────────────────────── */}
+      <FacebookFeed />
     </>
   );
 }
