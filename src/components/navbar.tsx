@@ -64,6 +64,12 @@ export function Navbar() {
             >
               Drive With Us
             </Link>
+            <Link
+              href="/driversportal"
+              className="hover:text-accent transition-colors"
+            >
+              Drivers Portal
+            </Link>
             <a
               href={FACEBOOK_URL}
               target="_blank"
@@ -144,6 +150,13 @@ export function Navbar() {
             onClick={() => setMenuOpen(false)}
           >
             Drive With Us
+          </Link>
+          <Link
+            href="/driversportal"
+            className="block py-2 hover:text-accent"
+            onClick={() => setMenuOpen(false)}
+          >
+            Drivers Portal
           </Link>
           <a
             href={FACEBOOK_URL}
