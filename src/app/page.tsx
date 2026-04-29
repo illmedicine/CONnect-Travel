@@ -1,47 +1,13 @@
 import Link from "next/link";
 import { facilities } from "@/data/facilities";
 import { generalRules } from "@/data/general-rules";
+import HeroCarousel from "@/components/hero-carousel";
 
 export default function HomePage() {
   return (
     <>
-      {/* ── Hero ───────────────────────────────────────────── */}
-      <section className="relative bg-gradient-to-br from-primary via-primary-light to-primary-dark text-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 md:py-28">
-          <div className="max-w-3xl">
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-extrabold leading-tight">
-              Connecting Families,
-              <br />
-              <span className="text-accent">One Ride at a Time</span>
-            </h1>
-            <p className="mt-6 text-lg md:text-xl text-gray-200 max-w-2xl">
-              Affordable, shared rides from Buffalo to Western NY correctional
-              facilities. Book a seat, we&apos;ll match you with a verified community
-              driver.
-            </p>
-            <div className="mt-8 flex flex-col sm:flex-row gap-4">
-              <Link
-                href="/book"
-                className="inline-flex items-center justify-center bg-accent hover:bg-accent-light text-primary-dark font-bold px-8 py-4 rounded-xl text-lg transition-colors shadow-lg"
-              >
-                Book a Ride — $50 per seat
-              </Link>
-              <Link
-                href="/driver"
-                className="inline-flex items-center justify-center border-2 border-white/30 hover:border-accent text-white font-semibold px-8 py-4 rounded-xl text-lg transition-colors"
-              >
-                Become a Driver
-              </Link>
-            </div>
-          </div>
-        </div>
-        {/* Decorative wave */}
-        <div className="absolute bottom-0 left-0 right-0">
-          <svg viewBox="0 0 1440 60" className="w-full h-12 text-surface fill-current">
-            <path d="M0,40 C360,80 720,0 1440,40 L1440,60 L0,60 Z" />
-          </svg>
-        </div>
-      </section>
+      {/* ── Hero Carousel ──────────────────────────────────── */}
+      <HeroCarousel />
 
       {/* ── How It Works ───────────────────────────────────── */}
       <section className="py-16 md:py-24 bg-surface">
