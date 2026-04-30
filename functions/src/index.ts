@@ -19,8 +19,17 @@ import puppeteer, { Browser } from "puppeteer-core";
 import chromium from "@sparticuz/chromium";
 
 initializeApp();
-getFirestore().settings({ ignoreUndefinedProperties: true });
 setGlobalOptions({ region: "us-east1", maxInstances: 5 });
+
+let _firestoreSettingsApplied = false;
+function db() {
+  const d = getFirestore();
+  if (!_firestoreSettingsApplied) {
+    d.settings({ ignoreUndefinedProperties: true });
+    _firestoreSettingsApplied = true;
+  }
+  return d;
+}
 
 const LOOKUP_URL = "https://nysdoccslookup.doccs.ny.gov/";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -71,8 +80,10 @@ function sanitize(input: SearchInput): SearchInput {
   };
 }
 
+const PARSER_VERSION = "v2";
+
 function hashQuery(q: SearchInput): string {
-  const canonical = JSON.stringify(q, Object.keys(q).sort());
+  const canonical = JSON.stringify({ ...q, _v: PARSER_VERSION }, Object.keys(q).sort().concat("_v"));
   return crypto.createHash("sha256").update(canonical).digest("hex").slice(0, 32);
 }
 
@@ -208,68 +219,144 @@ async function typeFieldByLabel(
 function extractInmateRecordsInBrowser(): InmateRecord[] {
   const out: InmateRecord[] = [];
 
-  // The DOCCS results page renders one or more detail panels with
-  // <dt>/<dd>-style label/value rows OR a table with two columns.
-  // We try a few strategies.
-
-  const collectFromTable = (table: HTMLTableElement) => {
-    const raw: Record<string, string> = {};
-    table.querySelectorAll("tr").forEach((tr) => {
-      const cells = tr.querySelectorAll("td,th");
-      if (cells.length >= 2) {
-        const k = (cells[0].textContent || "").trim().replace(/:$/, "");
-        const v = (cells[1].textContent || "").trim();
-        if (k && v) raw[k] = v;
-      }
-    });
-    return raw;
-  };
-
-  const tables = Array.from(document.querySelectorAll("table"));
-  for (const t of tables) {
-    const raw = collectFromTable(t as HTMLTableElement);
-    if (Object.keys(raw).length === 0) continue;
-    const r: InmateRecord = {
-      din: pick(raw, ["DIN", "Department ID Number", "Department Identification Number"]) || "",
-      name: pick(raw, ["Inmate Name", "Name"]) || "",
-      sex: pick(raw, ["Sex"]),
-      dateOfBirth: pick(raw, ["Date of Birth", "DOB"]),
-      race: pick(raw, ["Race / Ethnicity", "Race/Ethnicity", "Race"]),
-      custodyStatus: pick(raw, ["Custody Status", "Status"]),
-      housingFacility: pick(raw, [
-        "Housing / Releasing Facility",
-        "Housing Facility",
-        "Housing/Releasing Facility",
-        "Facility",
-      ]),
-      dateReceived: pick(raw, ["Date Received (Original)", "Date Received"]),
-      earliestReleaseDate: pick(raw, [
-        "Earliest Release Date",
-        "Earliest Release",
-      ]),
-      paroleHearingDate: pick(raw, ["Parole Hearing Date", "Parole Hearing"]),
-      paroleEligibilityDate: pick(raw, ["Parole Eligibility Date"]),
-      conditionalReleaseDate: pick(raw, ["Conditional Release Date"]),
-      maxExpirationDate: pick(raw, [
-        "Maximum Expiration Date",
-        "Max Expiration Date",
-      ]),
-      raw,
-    };
-    if (r.din || r.name) out.push(r);
-  }
-  return out;
-
-  function pick(map: Record<string, string>, keys: string[]): string | undefined {
+  function pick(map: Record<string, string>, keys: readonly string[]): string | undefined {
     for (const k of keys) {
-      if (map[k]) return map[k];
       const ci = Object.keys(map).find(
         (mk) => mk.toLowerCase() === k.toLowerCase(),
       );
-      if (ci) return map[ci];
+      if (ci && map[ci]) return map[ci];
+    }
+    // Fuzzy: any key that includes the hint
+    for (const k of keys) {
+      const fuzzy = Object.keys(map).find((mk) =>
+        mk.toLowerCase().includes(k.toLowerCase()),
+      );
+      if (fuzzy && map[fuzzy]) return map[fuzzy];
     }
     return undefined;
   }
+
+  const FIELD_ALIASES = {
+    din: ["DIN", "Department ID Number", "Department Identification Number"],
+    name: ["Inmate Name", "Name"],
+    sex: ["Sex"],
+    dateOfBirth: ["Date of Birth", "DOB", "Birth Date"],
+    race: ["Race / Ethnicity", "Race/Ethnicity", "Race"],
+    custodyStatus: ["Custody Status", "Status"],
+    housingFacility: [
+      "Housing / Releasing Facility",
+      "Housing Facility",
+      "Housing/Releasing Facility",
+      "Releasing Facility",
+      "Facility",
+    ],
+    dateReceived: ["Date Received (Original)", "Date Received"],
+    earliestReleaseDate: ["Earliest Release Date", "Earliest Release"],
+    paroleHearingDate: ["Parole Hearing Date", "Parole Hearing"],
+    paroleEligibilityDate: ["Parole Eligibility Date"],
+    conditionalReleaseDate: ["Conditional Release Date"],
+    maxExpirationDate: ["Maximum Expiration Date", "Max Expiration Date"],
+  } as const;
+
+  function buildRecord(raw: Record<string, string>): InmateRecord | null {
+    const din = pick(raw, FIELD_ALIASES.din) || "";
+    const name = pick(raw, FIELD_ALIASES.name) || "";
+    if (!din && !name) return null;
+    return {
+      din,
+      name,
+      sex: pick(raw, FIELD_ALIASES.sex),
+      dateOfBirth: pick(raw, FIELD_ALIASES.dateOfBirth),
+      race: pick(raw, FIELD_ALIASES.race),
+      custodyStatus: pick(raw, FIELD_ALIASES.custodyStatus),
+      housingFacility: pick(raw, FIELD_ALIASES.housingFacility),
+      dateReceived: pick(raw, FIELD_ALIASES.dateReceived),
+      earliestReleaseDate: pick(raw, FIELD_ALIASES.earliestReleaseDate),
+      paroleHearingDate: pick(raw, FIELD_ALIASES.paroleHearingDate),
+      paroleEligibilityDate: pick(raw, FIELD_ALIASES.paroleEligibilityDate),
+      conditionalReleaseDate: pick(raw, FIELD_ALIASES.conditionalReleaseDate),
+      maxExpirationDate: pick(raw, FIELD_ALIASES.maxExpirationDate),
+      raw,
+    };
+  }
+
+  const tables = Array.from(document.querySelectorAll("table"));
+  for (const t of tables) {
+    const rows = Array.from(t.querySelectorAll("tr"));
+    if (rows.length === 0) continue;
+
+    // Detect header row: <thead> present OR first row contains only <th>
+    const theadCells = Array.from(t.querySelectorAll("thead th"));
+    const firstRowThs = rows[0].querySelectorAll("th");
+    const firstRowTds = rows[0].querySelectorAll("td");
+    const hasHeaderRow =
+      theadCells.length > 0 ||
+      (firstRowThs.length > 0 && firstRowTds.length === 0);
+
+    if (hasHeaderRow) {
+      // Columnar table: one inmate per body row.
+      const headers = (
+        theadCells.length > 0 ? theadCells : Array.from(firstRowThs)
+      ).map((c) => (c.textContent || "").trim().replace(/:$/, ""));
+
+      const bodyRows =
+        theadCells.length > 0
+          ? Array.from(t.querySelectorAll("tbody tr"))
+          : rows.slice(1);
+
+      for (const tr of bodyRows) {
+        const cells = Array.from(tr.querySelectorAll("td,th"));
+        if (cells.length === 0) continue;
+        const raw: Record<string, string> = {};
+        cells.forEach((c, i) => {
+          const k = headers[i];
+          const v = (c.textContent || "").trim();
+          if (k && v) raw[k] = v;
+        });
+        const rec = buildRecord(raw);
+        if (rec) out.push(rec);
+      }
+    } else {
+      // Key/value table: each row has label cell + value cell(s).
+      const raw: Record<string, string> = {};
+      rows.forEach((tr) => {
+        const cells = tr.querySelectorAll("td,th");
+        if (cells.length >= 2) {
+          const k = (cells[0].textContent || "").trim().replace(/:$/, "");
+          const v = (cells[1].textContent || "").trim();
+          if (k && v) raw[k] = v;
+        }
+      });
+      const rec = buildRecord(raw);
+      if (rec) out.push(rec);
+    }
+  }
+
+  // Fallback: <dl> definition lists.
+  if (out.length === 0) {
+    document.querySelectorAll("dl").forEach((dl) => {
+      const raw: Record<string, string> = {};
+      const dts = dl.querySelectorAll("dt");
+      const dds = dl.querySelectorAll("dd");
+      const n = Math.min(dts.length, dds.length);
+      for (let i = 0; i < n; i++) {
+        const k = (dts[i].textContent || "").trim().replace(/:$/, "");
+        const v = (dds[i].textContent || "").trim();
+        if (k && v) raw[k] = v;
+      }
+      const rec = buildRecord(raw);
+      if (rec) out.push(rec);
+    });
+  }
+
+  // De-duplicate by DIN.
+  const seen = new Set<string>();
+  return out.filter((r) => {
+    const key = r.din || r.name;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export const searchDoccs = onCall(
@@ -295,9 +382,8 @@ export const searchDoccs = onCall(
       );
     }
 
-    const db = getFirestore();
     const cacheId = hashQuery(q);
-    const cacheRef = db.collection("doccsCache").doc(cacheId);
+    const cacheRef = db().collection("doccsCache").doc(cacheId);
 
     const cached = await cacheRef.get();
     if (cached.exists) {
