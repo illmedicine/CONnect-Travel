@@ -1,0 +1,10 @@
+{
+  "rules": {
+    "pings": {
+      "$tripId": {
+        ".read": "auth != null",
+        ".write": "auth != null && newData.child('driverId').val() == auth.uid"
+      }
+    }
+  }
+}

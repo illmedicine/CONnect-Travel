@@ -3,15 +3,15 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
-  getMessages,
-  getTrips,
   postMessage,
-  readPing,
-  subscribe,
+  subscribeMessages,
+  subscribePing,
+  subscribeTrip,
   type DriverPing,
   type TripMessage,
   type TripRequest,
 } from "@/lib/driver-data";
+import { onIdentityChange, type DriverIdentity } from "@/lib/driver-auth";
 
 const HOUR_MS = 3_600_000;
 
@@ -34,85 +34,82 @@ function Loading() {
 function TrackInner() {
   const params = useSearchParams();
   const tripId = params.get("trip") ?? "";
-  const [trips, setTrips] = useState<TripRequest[]>([]);
+  const [trip, setTrip] = useState<TripRequest | null>(null);
+  const [tripLoaded, setTripLoaded] = useState(false);
   const [ping, setPing] = useState<DriverPing | null>(null);
   const [messages, setMessages] = useState<TripMessage[]>([]);
+  const [identity, setIdentity] = useState<DriverIdentity | null>(null);
   const [draft, setDraft] = useState("");
   const [riderName, setRiderName] = useState("");
 
-  useEffect(() => {
-    setTrips(getTrips());
-    return subscribe(
-      (e) => e.type === "trips",
-      () => setTrips(getTrips()),
-    );
-  }, []);
+  useEffect(() => onIdentityChange(setIdentity), []);
 
   useEffect(() => {
     if (!tripId) return;
-    setPing(readPing(tripId));
-    setMessages(getMessages(tripId));
-    return subscribe(
-      (e) =>
-        (e.type === "ping" && e.tripId === tripId) ||
-        (e.type === "messages" && e.tripId === tripId),
-      () => {
-        setPing(readPing(tripId));
-        setMessages(getMessages(tripId));
-      },
-    );
+    const u = subscribeTrip(tripId, (t) => {
+      setTrip(t);
+      setTripLoaded(true);
+    });
+    return u;
   }, [tripId]);
 
-  const trip = useMemo(
-    () => trips.find((t) => t.id === tripId) ?? null,
-    [trips, tripId],
-  );
+  useEffect(() => {
+    if (!tripId) return;
+    const u1 = subscribePing(tripId, setPing);
+    const u2 = subscribeMessages(tripId, setMessages);
+    return () => {
+      u1();
+      u2();
+    };
+  }, [tripId]);
+
+  const window = useMemo(() => {
+    if (!trip) return null;
+    const startMs = new Date(trip.startsAtIso).getTime();
+    const trackingOpensMs = startMs - HOUR_MS;
+    const now = Date.now();
+    return {
+      trackingOpen: now >= trackingOpensMs && now < startMs + 6 * HOUR_MS,
+      minutesUntilOpen: Math.max(0, Math.round((trackingOpensMs - now) / 60_000)),
+    };
+  }, [trip]);
 
   if (!tripId) {
     return (
       <Shell>
-        <h1 className="text-xl font-bold text-primary-dark">
-          No trip specified
-        </h1>
+        <h1 className="text-xl font-bold text-primary-dark">No trip specified</h1>
         <p className="mt-2 text-sm text-gray-600">
           Open the tracking link from your booking confirmation, or paste your
           trip ID into the URL like{" "}
-          <code className="bg-gray-100 px-1 rounded">?trip=req-101</code>.
+          <code className="bg-gray-100 px-1 rounded">?trip=abc123</code>.
         </p>
       </Shell>
     );
+  }
+
+  if (!tripLoaded) {
+    return <Loading />;
   }
 
   if (!trip) {
     return (
       <Shell>
-        <h1 className="text-xl font-bold text-primary-dark">
-          Trip not found
-        </h1>
+        <h1 className="text-xl font-bold text-primary-dark">Trip not found</h1>
         <p className="mt-2 text-sm text-gray-600">
-          We couldn&apos;t find a trip with ID <code>{tripId}</code> on this
-          device. If you opened this link on a phone different from the one you
-          booked on, your driver may not have published a ping yet.
+          We couldn&apos;t find a trip with ID <code>{tripId}</code>. Double-
+          check the link your driver shared.
         </p>
       </Shell>
     );
   }
 
-  const startMs = new Date(trip.startsAtIso).getTime();
-  const trackingOpensMs = startMs - HOUR_MS;
-  const now = Date.now();
-  const trackingOpen = now >= trackingOpensMs && now < startMs + 6 * HOUR_MS;
-  const minutesUntilOpen = Math.max(
-    0,
-    Math.round((trackingOpensMs - now) / 60_000),
-  );
-
   const sendMessage = () => {
     const body = draft.trim();
     if (!body) return;
-    postMessage({
+    void postMessage({
       tripId,
       authorRole: "rider",
+      authorUid: identity?.uid,
       authorName: riderName.trim() || trip.riderName,
       body,
     });
@@ -125,9 +122,7 @@ function TrackInner() {
         <p className="text-xs uppercase tracking-wide text-gray-500">
           Trip {trip.id} · {trip.visitDateLabel}
         </p>
-        <h1 className="text-xl font-bold text-primary-dark">
-          {trip.facilityName}
-        </h1>
+        <h1 className="text-xl font-bold text-primary-dark">{trip.facilityName}</h1>
         <p className="text-sm text-gray-600">Pickup: {trip.pickupArea}</p>
       </header>
 
@@ -136,21 +131,21 @@ function TrackInner() {
           <h2 className="font-semibold text-primary-dark">Driver location</h2>
           <span
             className={`text-xs font-semibold px-2 py-1 rounded-full ${
-              trackingOpen
+              window?.trackingOpen
                 ? "bg-emerald-100 text-emerald-800"
                 : "bg-gray-100 text-gray-700"
             }`}
           >
-            {trackingOpen ? "Live" : "Opens at T-1h"}
+            {window?.trackingOpen ? "Live" : "Opens at T-1h"}
           </span>
         </div>
 
-        {!trackingOpen ? (
+        {!window?.trackingOpen ? (
           <p className="mt-3 text-sm text-gray-600">
             Live GPS tracking opens automatically{" "}
             <strong>1 hour before pickup</strong>
-            {minutesUntilOpen > 0 && (
-              <> — about {formatCountdown(minutesUntilOpen)} from now</>
+            {window && window.minutesUntilOpen > 0 && (
+              <> — about {formatCountdown(window.minutesUntilOpen)} from now</>
             )}
             . Your driver&apos;s privacy is protected outside that window.
           </p>
@@ -189,9 +184,7 @@ function TrackInner() {
       </section>
 
       <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-        <h2 className="font-semibold text-primary-dark">
-          Message your driver
-        </h2>
+        <h2 className="font-semibold text-primary-dark">Message your driver</h2>
         <p className="text-xs text-gray-500 mt-1">
           {trip.acceptedByDriverName
             ? `Connected with ${trip.acceptedByDriverName}.`
@@ -200,17 +193,12 @@ function TrackInner() {
 
         <div className="mt-3 space-y-2 max-h-64 overflow-y-auto">
           {messages.length === 0 && (
-            <p className="text-sm text-gray-500 text-center py-4">
-              No messages yet.
-            </p>
+            <p className="text-sm text-gray-500 text-center py-4">No messages yet.</p>
           )}
           {messages.map((m) => {
             const mine = m.authorRole === "rider";
             return (
-              <div
-                key={m.id}
-                className={`flex ${mine ? "justify-end" : "justify-start"}`}
-              >
+              <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
                 <div
                   className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${
                     mine

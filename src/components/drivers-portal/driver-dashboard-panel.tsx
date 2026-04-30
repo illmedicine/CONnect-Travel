@@ -4,12 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import {
   acceptTrip,
   declineTrip,
-  getMessages,
-  getTrips,
   postMessage,
   publishPing,
-  readPing,
-  subscribe,
+  subscribeDriverTrips,
+  subscribeMessages,
+  subscribePing,
   type DriverPing,
   type TripMessage,
   type TripRequest,
@@ -45,15 +44,11 @@ export default function DriverDashboardPanel({ identity }: Props) {
   const [openTripId, setOpenTripId] = useState<string | null>(null);
 
   useEffect(() => {
-    setTrips(getTrips());
-    return subscribe(
-      (e) => e.type === "trips",
-      () => setTrips(getTrips()),
-    );
-  }, []);
+    return subscribeDriverTrips(identity.uid, setTrips);
+  }, [identity.uid]);
 
   const groups = useMemo(() => {
-    const myId = identity.sub;
+    const myId = identity.uid;
     const available = trips.filter((t) => t.status === "pending");
     const active = trips.filter(
       (t) =>
@@ -64,14 +59,13 @@ export default function DriverDashboardPanel({ identity }: Props) {
       (t) => t.status === "completed" && t.acceptedByDriverId === myId,
     );
     return { available, active, completed };
-  }, [trips, identity.sub]);
+  }, [trips, identity.uid]);
 
   const visible = groups[tab];
   const activeTrip = trips.find((t) => t.id === openTripId) ?? null;
 
   return (
     <div className="space-y-4">
-      {/* Tab strip — scrollable on mobile */}
       <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 sticky top-16 bg-white z-10">
         {(
           [
@@ -169,7 +163,7 @@ export default function DriverDashboardPanel({ identity }: Props) {
                 <>
                   <button
                     onClick={() =>
-                      acceptTrip(trip.id, identity.sub, identity.name)
+                      acceptTrip(trip.id, identity.uid, identity.name)
                     }
                     className="flex-1 min-w-[8rem] bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold py-2 rounded-lg transition-colors"
                   >
@@ -214,8 +208,6 @@ export default function DriverDashboardPanel({ identity }: Props) {
   );
 }
 
-// ── Active trip bottom sheet ───────────────────────────────────────────
-
 interface SheetProps {
   trip: TripRequest;
   identity: DriverIdentity;
@@ -248,7 +240,13 @@ function ActiveTripSheet({ trip, identity, trackingOpen, onClose }: SheetProps) 
             className="p-2 rounded-full hover:bg-gray-100"
             aria-label="Close"
           >
-            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <svg
+              className="w-5 h-5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
@@ -287,8 +285,6 @@ function ActiveTripSheet({ trip, identity, trackingOpen, onClose }: SheetProps) 
   );
 }
 
-// ── Messages ───────────────────────────────────────────────────────────
-
 function MessageThread({
   trip,
   identity,
@@ -299,20 +295,15 @@ function MessageThread({
   const [items, setItems] = useState<TripMessage[]>([]);
   const [draft, setDraft] = useState("");
 
-  useEffect(() => {
-    setItems(getMessages(trip.id));
-    return subscribe(
-      (e) => e.type === "messages" && e.tripId === trip.id,
-      () => setItems(getMessages(trip.id)),
-    );
-  }, [trip.id]);
+  useEffect(() => subscribeMessages(trip.id, setItems), [trip.id]);
 
   const submit = () => {
     const body = draft.trim();
     if (!body) return;
-    postMessage({
+    void postMessage({
       tripId: trip.id,
       authorRole: "driver",
+      authorUid: identity.uid,
       authorName: identity.given_name ?? identity.name,
       body,
     });
@@ -330,10 +321,7 @@ function MessageThread({
         {items.map((m) => {
           const mine = m.authorRole === "driver";
           return (
-            <div
-              key={m.id}
-              className={`flex ${mine ? "justify-end" : "justify-start"}`}
-            >
+            <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
               <div
                 className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${
                   mine
@@ -379,8 +367,6 @@ function MessageThread({
   );
 }
 
-// ── GPS broadcast ──────────────────────────────────────────────────────
-
 function GpsPanel({
   trip,
   identity,
@@ -395,9 +381,7 @@ function GpsPanel({
   const [error, setError] = useState<string | null>(null);
   const [watchId, setWatchId] = useState<number | null>(null);
 
-  useEffect(() => {
-    setLatest(readPing(trip.id));
-  }, [trip.id]);
+  useEffect(() => subscribePing(trip.id, setLatest), [trip.id]);
 
   useEffect(() => {
     return () => {
@@ -417,7 +401,7 @@ function GpsPanel({
       (pos) => {
         const ping: DriverPing = {
           tripId: trip.id,
-          driverId: identity.sub,
+          driverId: identity.uid,
           driverName: identity.name,
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
@@ -426,8 +410,7 @@ function GpsPanel({
           accuracy: pos.coords.accuracy,
           capturedAtIso: new Date(pos.timestamp).toISOString(),
         };
-        publishPing(ping);
-        setLatest(ping);
+        void publishPing(ping);
       },
       (err) => setError(err.message),
       { enableHighAccuracy: true, maximumAge: 5_000, timeout: 15_000 },
@@ -448,16 +431,16 @@ function GpsPanel({
         <p className="font-semibold">Live tracking policy</p>
         <p className="mt-1">
           Riders can see your location starting{" "}
-          <strong>1 hour before pickup</strong> and until the trip ends. Outside
-          that window, sharing is disabled to protect your privacy.
+          <strong>1 hour before pickup</strong> and until the trip ends.
+          Outside that window, sharing is disabled to protect your privacy.
         </p>
       </div>
 
       {!trackingOpen ? (
         <p className="text-sm text-gray-600">
           The tracking window opens 1 hour before pickup. You can pre-test the
-          permission below; pings won&apos;t be visible to riders until the
-          window opens.
+          permission below; pings stay in Firebase but won&apos;t be visible to
+          riders until the window opens.
         </p>
       ) : (
         <p className="text-sm text-emerald-700 font-semibold">

@@ -1,32 +1,61 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import GoogleSignInButton from "@/components/drivers-portal/google-signin";
 import DriverDashboardPanel from "@/components/drivers-portal/driver-dashboard-panel";
 import {
-  clearIdentity,
+  ensureDriverRecord,
   isRegisteredDriver,
-  loadIdentity,
+  onIdentityChange,
+  signInWithGoogle,
+  signOutDriver,
   type DriverIdentity,
 } from "@/lib/driver-auth";
 
+type AuthStatus = "loading" | "anonymous" | "unauthorized" | "authorized";
+
 export default function DriversPortalShell() {
   const [identity, setIdentity] = useState<DriverIdentity | null>(null);
+  const [status, setStatus] = useState<AuthStatus>("loading");
   const [authError, setAuthError] = useState<string | null>(null);
-  const [hydrated, setHydrated] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
 
   useEffect(() => {
-    setIdentity(loadIdentity());
-    setHydrated(true);
+    return onIdentityChange(async (id) => {
+      if (!id) {
+        setIdentity(null);
+        setStatus("anonymous");
+        return;
+      }
+      setIdentity(id);
+      await ensureDriverRecord(id);
+      const ok = await isRegisteredDriver(id);
+      setStatus(ok ? "authorized" : "unauthorized");
+    });
   }, []);
 
-  const signOut = () => {
-    clearIdentity();
-    setIdentity(null);
+  const handleSignIn = async () => {
+    setSigningIn(true);
+    setAuthError(null);
+    try {
+      await signInWithGoogle();
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      setAuthError(
+        code === "auth/unauthorized-domain"
+          ? "This domain is not authorized in Firebase Auth. Add it under Authentication → Settings → Authorized domains."
+          : `Sign-in failed${code ? ` (${code})` : ""}.`,
+      );
+    } finally {
+      setSigningIn(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    await signOutDriver();
     setAuthError(null);
   };
 
-  if (!hydrated) {
+  if (status === "loading") {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <p className="text-sm text-gray-500">Loading portal…</p>
@@ -34,19 +63,22 @@ export default function DriversPortalShell() {
     );
   }
 
-  if (!identity) {
-    return <SignInScreen onError={setAuthError} error={authError} onSuccess={setIdentity} />;
+  if (status === "anonymous" || !identity) {
+    return (
+      <SignInScreen
+        onSignIn={handleSignIn}
+        signingIn={signingIn}
+        error={authError}
+      />
+    );
   }
 
-  if (!isRegisteredDriver(identity.email)) {
-    return (
-      <NotAuthorizedScreen identity={identity} onSignOut={signOut} />
-    );
+  if (status === "unauthorized") {
+    return <NotAuthorizedScreen identity={identity} onSignOut={handleSignOut} />;
   }
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Mobile-first portal header */}
       <header className="sticky top-0 z-30 bg-primary text-white shadow">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -71,7 +103,7 @@ export default function DriversPortalShell() {
             </p>
           </div>
           <button
-            onClick={signOut}
+            onClick={handleSignOut}
             className="text-xs font-semibold bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-full"
           >
             Sign out
@@ -86,15 +118,13 @@ export default function DriversPortalShell() {
   );
 }
 
-// ── Sign-in screen ─────────────────────────────────────────────────────
-
 function SignInScreen({
-  onSuccess,
-  onError,
+  onSignIn,
+  signingIn,
   error,
 }: {
-  onSuccess: (id: DriverIdentity) => void;
-  onError: (msg: string) => void;
+  onSignIn: () => void;
+  signingIn: boolean;
   error: string | null;
 }) {
   return (
@@ -126,9 +156,14 @@ function SignInScreen({
             .
           </p>
 
-          <div className="mt-6 flex justify-center">
-            <GoogleSignInButton onSuccess={onSuccess} onError={onError} />
-          </div>
+          <button
+            onClick={onSignIn}
+            disabled={signingIn}
+            className="mt-6 w-full inline-flex items-center justify-center gap-3 bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-60 text-gray-800 font-semibold py-3 rounded-full shadow-sm transition-colors"
+          >
+            <GoogleGlyph className="w-5 h-5" />
+            {signingIn ? "Opening Google…" : "Continue with Google"}
+          </button>
 
           {error && (
             <p className="mt-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">
@@ -142,17 +177,11 @@ function SignInScreen({
             $1 one-time download · free updates · Google Play release in
             progress
           </p>
-          <p className="mt-1">
-            Riders can download the free passenger app to book trips and track
-            their driver.
-          </p>
         </div>
       </div>
     </div>
   );
 }
-
-// ── Not authorized ─────────────────────────────────────────────────────
 
 function NotAuthorizedScreen({
   identity,
@@ -166,18 +195,18 @@ function NotAuthorizedScreen({
       <div className="max-w-md w-full bg-white rounded-2xl shadow p-6 text-center">
         <div className="text-4xl">🚧</div>
         <h2 className="mt-3 font-bold text-primary-dark text-lg">
-          This Google account isn&apos;t on the driver roster
+          This Google account isn&apos;t on the active driver roster
         </h2>
         <p className="mt-2 text-sm text-gray-600 break-all">
-          You signed in as <strong>{identity.email}</strong>. Drivers Portal
-          access is limited to registered drivers approved by dispatch.
+          You signed in as <strong>{identity.email}</strong>. Your application
+          has been recorded — dispatch will activate your account after review.
         </p>
         <div className="mt-5 flex flex-col gap-2">
           <a
             href="mailto:dispatch@connetworktravel.com?subject=Driver%20portal%20access"
             className="bg-primary hover:bg-primary-dark text-white font-semibold py-2 rounded-lg"
           >
-            Apply to drive
+            Contact dispatch
           </a>
           <button
             onClick={onSignOut}
@@ -188,5 +217,28 @@ function NotAuthorizedScreen({
         </div>
       </div>
     </div>
+  );
+}
+
+function GoogleGlyph({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 48 48" className={className} aria-hidden="true">
+      <path
+        fill="#FFC107"
+        d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.6-6 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 8 3l5.7-5.7C33.6 6.1 29 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.4-.4-3.5z"
+      />
+      <path
+        fill="#FF3D00"
+        d="M6.3 14.7l6.6 4.8C14.6 16 19 13 24 13c3 0 5.8 1.1 8 3l5.7-5.7C33.6 6.1 29 4 24 4 16.3 4 9.7 8.4 6.3 14.7z"
+      />
+      <path
+        fill="#4CAF50"
+        d="M24 44c5 0 9.5-1.9 12.9-5l-6-4.9c-2 1.4-4.4 2.3-6.9 2.3-5.3 0-9.7-3.4-11.3-8l-6.5 5C9.5 39.5 16.2 44 24 44z"
+      />
+      <path
+        fill="#1976D2"
+        d="M43.6 20.5H42V20H24v8h11.3c-.7 2-2 3.7-3.6 5l6 4.9c-.4.4 6.3-4.6 6.3-13.9 0-1.2-.1-2.4-.4-3.5z"
+      />
+    </svg>
   );
 }

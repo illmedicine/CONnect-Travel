@@ -1,0 +1,68 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isActiveDriver() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/drivers/$(request.auth.uid))
+        && get(/databases/$(database)/documents/drivers/$(request.auth.uid)).data.active == true;
+    }
+
+    // Driver roster: each user can read/write their own record on first sign-in
+    // (with active=false). Only an admin / Cloud Function can flip `active=true`.
+    match /drivers/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow create: if isSignedIn()
+        && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.active == false;
+      allow update: if isSignedIn()
+        && request.auth.uid == uid
+        // Drivers can refresh their own metadata but never self-promote.
+        && request.resource.data.active == resource.data.active;
+    }
+
+    // Trips: any signed-in user can create a trip request. Active drivers can
+    // see pending trips and trips they accepted. Riders can only see their own.
+    match /trips/{tripId} {
+      allow create: if isSignedIn()
+        && request.resource.data.status == 'pending';
+
+      allow read: if isSignedIn() && (
+        // Active drivers may see any pending trip OR their accepted trips.
+        (isActiveDriver() && (
+          resource.data.status == 'pending'
+          || resource.data.acceptedByDriverId == request.auth.uid
+        ))
+        // Rider sees their own trip.
+        || resource.data.riderUid == request.auth.uid
+      );
+
+      // Driver accepts/declines/updates trip status.
+      allow update: if isActiveDriver()
+        && (
+          resource.data.status == 'pending'
+          || resource.data.acceptedByDriverId == request.auth.uid
+        );
+
+      match /messages/{msgId} {
+        function trip() {
+          return get(/databases/$(database)/documents/trips/$(tripId)).data;
+        }
+        function isParticipant() {
+          return isSignedIn() && (
+            trip().riderUid == request.auth.uid
+            || trip().acceptedByDriverId == request.auth.uid
+          );
+        }
+        allow read: if isParticipant() || isActiveDriver();
+        allow create: if isParticipant()
+          && request.resource.data.authorUid == request.auth.uid;
+      }
+    }
+  }
+}
