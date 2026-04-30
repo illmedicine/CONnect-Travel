@@ -1,9 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import type { BookingData } from "./booking-wizard";
-import { DoccsLookupEmbed } from "./doccs-lookup-embed";
 import { facilities } from "@/data/facilities";
+import {
+  searchDoccs,
+  type DoccsInmateRecord,
+  type DoccsSearchInput,
+} from "@/lib/doccs";
+import { onIdentityChange } from "@/lib/driver-auth";
+import { useEffect } from "react";
 
 interface Props {
   data: Partial<BookingData>;
@@ -12,25 +18,114 @@ interface Props {
   onBack: () => void;
 }
 
-// DIN format: 2-digit year + letter + 4 digits, e.g. 24B1234
 const DIN_PATTERN = /^\d{2}[A-Z]\d{4}$/;
 
+type Mode = "din" | "name";
+
 export function StepInmate({ data, updateData, onNext, onBack }: Props) {
-  const [showLookup, setShowLookup] = useState(false);
+  const [mode, setMode] = useState<Mode>("din");
+  const [searching, setSearching] = useState(false);
+  const [results, setResults] = useState<DoccsInmateRecord[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [cacheNote, setCacheNote] = useState<string | null>(null);
+  const [signedIn, setSignedIn] = useState<boolean | null>(null);
 
-  const din = (data.inmateDIN || "").toUpperCase();
-  const dinValid = DIN_PATTERN.test(din);
-  const dinTouched = din.length > 0;
+  // DIN form
+  const [dinInput, setDinInput] = useState(data.inmateDIN || "");
 
-  const sortedFacilities = useMemo(
-    () => [...facilities].sort((a, b) => a.name.localeCompare(b.name)),
+  // Name form
+  const [lastName, setLastName] = useState(data.inmateLastName || "");
+  const [firstName, setFirstName] = useState("");
+  const [middleInitial, setMiddleInitial] = useState("");
+  const [suffix, setSuffix] = useState("");
+  const [birthYear, setBirthYear] = useState("");
+
+  useEffect(
+    () =>
+      onIdentityChange((id) => {
+        setSignedIn(!!id);
+      }),
     [],
   );
 
-  const selectedFacility = facilities.find((f) => f.id === data.facilityId);
+  const dinValid = !dinInput || DIN_PATTERN.test(dinInput.toUpperCase());
+
+  const runSearch = async () => {
+    setError(null);
+    setCacheNote(null);
+    setResults(null);
+
+    let payload: DoccsSearchInput;
+    if (mode === "din") {
+      const din = dinInput.toUpperCase();
+      if (!DIN_PATTERN.test(din)) {
+        setError("Enter a valid DIN like 24B1234.");
+        return;
+      }
+      payload = { din };
+    } else {
+      if (!lastName.trim()) {
+        setError("Last name is required.");
+        return;
+      }
+      payload = {
+        lastName: lastName.trim(),
+        firstName: firstName.trim() || undefined,
+        middleInitial: middleInitial.trim() || undefined,
+        suffix: suffix.trim() || undefined,
+        birthYear: birthYear.trim() || undefined,
+      };
+    }
+
+    setSearching(true);
+    try {
+      const res = await searchDoccs(payload);
+      setResults(res.inmates);
+      if (res.cached) {
+        setCacheNote(
+          `Cached result from ${new Date(res.fetchedAtIso).toLocaleString()}.`,
+        );
+      }
+      if (res.inmates.length === 0 && res.message) {
+        setError(res.message);
+      }
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      if (code === "functions/unauthenticated") {
+        setError("Please sign in first to use the DOCCS lookup.");
+      } else {
+        setError(
+          (e as { message?: string }).message ||
+            "DOCCS lookup failed. Try again.",
+        );
+      }
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const matchFacility = (housing?: string): string | undefined => {
+    if (!housing) return undefined;
+    const norm = housing.toLowerCase();
+    return facilities.find((f) => norm.includes(f.name.toLowerCase().split(" ")[0]))
+      ?.id;
+  };
+
+  const selectInmate = (r: DoccsInmateRecord) => {
+    const facId = matchFacility(r.housingFacility);
+    const parts = r.name.split(/[\s,]+/).filter(Boolean);
+    updateData({
+      inmateDIN: r.din,
+      inmateName: r.name,
+      inmateLastName: parts[0] || "",
+      ...(facId ? { facilityId: facId } : {}),
+    });
+  };
 
   const canProceed =
-    dinValid && (data.inmateName || "").trim().length >= 2;
+    !!data.inmateDIN &&
+    DIN_PATTERN.test(data.inmateDIN.toUpperCase()) &&
+    (data.inmateName || "").trim().length >= 2;
 
   return (
     <div>
@@ -38,117 +133,198 @@ export function StepInmate({ data, updateData, onNext, onBack }: Props) {
         Step 2: Inmate Information
       </h2>
       <p className="text-sm text-gray-500 mb-6">
-        Enter your loved one&apos;s DIN. We&apos;ll match the visiting schedule to
-        the correct facility. Use the official lookup below if you need to
-        confirm their current location.
+        Search the official New York State DOCCS roster by DIN or last name.
       </p>
 
-      <div className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            DIN (Departmental Identification Number)
-          </label>
+      {signedIn === false && (
+        <div className="mb-4 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+          You need to sign in before searching DOCCS.{" "}
+          <a href="/login" className="font-semibold underline">
+            Sign in →
+          </a>
+        </div>
+      )}
+
+      <div className="flex gap-2 mb-4">
+        <button
+          onClick={() => setMode("din")}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            mode === "din"
+              ? "bg-primary text-white"
+              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+          }`}
+        >
+          By DIN
+        </button>
+        <button
+          onClick={() => setMode("name")}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            mode === "name"
+              ? "bg-primary text-white"
+              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+          }`}
+        >
+          By Name
+        </button>
+      </div>
+
+      {mode === "din" ? (
+        <div className="space-y-2">
           <input
             type="text"
             placeholder="e.g. 24B1234"
             maxLength={7}
-            value={din}
-            onChange={(e) =>
-              updateData({ inmateDIN: e.target.value.toUpperCase() })
-            }
+            value={dinInput}
+            onChange={(e) => setDinInput(e.target.value.toUpperCase())}
             className={`w-full border rounded-xl px-4 py-3 text-sm font-mono uppercase tracking-wider focus:outline-none focus:ring-2 ${
-              dinTouched && !dinValid
-                ? "border-red-300 focus:ring-red-300"
-                : "border-gray-200 focus:ring-accent"
+              dinValid
+                ? "border-gray-200 focus:ring-accent"
+                : "border-red-300 focus:ring-red-300"
             }`}
           />
-          <p className="mt-1 text-xs text-gray-500">
-            Format: 2-digit year + letter + 4 digits (e.g. <code>24B1234</code>).
+          <p className="text-xs text-gray-500">
+            Format: 2-digit year + letter + 4 digits.
           </p>
-          {dinTouched && !dinValid && (
-            <p className="mt-1 text-xs text-red-600">
-              That doesn&apos;t look like a valid DIN format.
-            </p>
-          )}
         </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Inmate&apos;s Full Name
-          </label>
-          <input
-            type="text"
-            placeholder="First Last"
-            value={data.inmateName || ""}
-            onChange={(e) => {
-              const name = e.target.value;
-              const parts = name.trim().split(/\s+/);
-              updateData({
-                inmateName: name,
-                inmateLastName: parts[parts.length - 1] || "",
-              });
-            }}
-            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Current Facility
-          </label>
-          <select
-            value={data.facilityId || ""}
-            onChange={(e) => updateData({ facilityId: e.target.value })}
-            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-accent"
-          >
-            <option value="">Select facility…</option>
-            {sortedFacilities.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.name} — {f.location}
-              </option>
-            ))}
-          </select>
-          {selectedFacility && (
-            <p className="mt-1 text-xs text-gray-500">
-              Visiting: {selectedFacility.visitingHours.days} ·{" "}
-              {selectedFacility.visitingHours.start}–
-              {selectedFacility.visitingHours.end}
-            </p>
-          )}
-        </div>
-      </div>
-
-      <div className="mt-6 rounded-xl border border-gray-100 bg-surface p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h3 className="font-semibold text-primary-dark text-sm">
-              🔎 Verify with the official DOCCS Lookup
-            </h3>
-            <p className="text-xs text-gray-500 mt-1">
-              Confirm the current facility, parole hearing dates, and release
-              info directly from New York State&apos;s Department of Corrections
-              and Community Supervision.
-            </p>
-          </div>
-          {!showLookup && (
-            <button
-              onClick={() => setShowLookup(true)}
-              className="shrink-0 bg-primary hover:bg-primary-light text-white font-medium px-4 py-2 rounded-lg transition-colors text-xs"
-            >
-              Open Lookup
-            </button>
-          )}
-        </div>
-
-        {showLookup && (
-          <div className="mt-4">
-            <DoccsLookupEmbed
-              prefilledDIN={dinValid ? din : undefined}
-              onClose={() => setShowLookup(false)}
+      ) : (
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2">
+            <label className="block text-xs text-gray-600 mb-1">
+              Last Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+              className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
             />
           </div>
-        )}
-      </div>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">First</label>
+            <input
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">M.I.</label>
+            <input
+              value={middleInitial}
+              maxLength={1}
+              onChange={(e) => setMiddleInitial(e.target.value)}
+              className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Suffix</label>
+            <input
+              value={suffix}
+              placeholder="Jr, Sr, III…"
+              onChange={(e) => setSuffix(e.target.value)}
+              className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Birth Year</label>
+            <input
+              value={birthYear}
+              maxLength={4}
+              placeholder="1985"
+              onChange={(e) => setBirthYear(e.target.value)}
+              className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+            />
+          </div>
+        </div>
+      )}
+
+      <button
+        onClick={runSearch}
+        disabled={searching || signedIn === false}
+        className="mt-4 bg-primary hover:bg-primary-light disabled:opacity-40 text-white font-semibold px-6 py-3 rounded-xl transition-colors text-sm w-full sm:w-auto"
+      >
+        {searching ? "Searching DOCCS…" : "Search DOCCS"}
+      </button>
+
+      {error && (
+        <p className="mt-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          {error}
+        </p>
+      )}
+
+      {cacheNote && (
+        <p className="mt-2 text-xs text-gray-500">{cacheNote}</p>
+      )}
+
+      {results && results.length > 0 && (
+        <div className="mt-5 space-y-2">
+          <p className="text-xs text-gray-400 uppercase font-semibold tracking-wider">
+            Results from NYS DOCCS
+          </p>
+          {results.map((r) => {
+            const isSelected = data.inmateDIN === r.din;
+            return (
+              <button
+                key={r.din}
+                onClick={() => selectInmate(r)}
+                className={`w-full text-left p-4 rounded-xl border-2 transition-colors ${
+                  isSelected
+                    ? "border-accent bg-accent/5"
+                    : "border-gray-100 hover:border-gray-200"
+                }`}
+              >
+                <div className="flex justify-between items-start gap-3">
+                  <div>
+                    <div className="font-semibold text-primary-dark">
+                      {r.name}
+                    </div>
+                    <div className="text-sm text-gray-500">
+                      DIN: <span className="font-mono">{r.din}</span>
+                      {r.dateOfBirth && <> · DOB {r.dateOfBirth}</>}
+                    </div>
+                    {r.housingFacility && (
+                      <div className="text-sm text-gray-700 mt-1">
+                        🏛️ {r.housingFacility}
+                      </div>
+                    )}
+                    {r.custodyStatus && (
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        {r.custodyStatus}
+                      </div>
+                    )}
+                  </div>
+                  {isSelected && (
+                    <span className="text-xs font-semibold text-accent shrink-0">
+                      ✓ Selected
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {data.inmateDIN && (
+        <div className="mt-6 rounded-xl border border-gray-100 bg-surface p-4">
+          <p className="text-xs uppercase tracking-wider text-gray-500 font-semibold">
+            Selected
+          </p>
+          <p className="font-semibold text-primary-dark mt-1">
+            {data.inmateName}
+          </p>
+          <p className="text-sm text-gray-600">
+            DIN <span className="font-mono">{data.inmateDIN}</span>
+            {data.facilityId && (
+              <>
+                {" "}
+                ·{" "}
+                {facilities.find((f) => f.id === data.facilityId)?.name ||
+                  "Facility"}
+              </>
+            )}
+          </p>
+        </div>
+      )}
 
       <div className="mt-8 flex justify-between">
         <button

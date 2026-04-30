@@ -64,5 +64,13 @@ service cloud.firestore {
           && request.resource.data.authorUid == request.auth.uid;
       }
     }
+
+    // DOCCS lookup cache — populated by the searchDoccs Cloud Function
+    // (admin SDK bypasses these rules). Clients may read for transparency
+    // but never write directly.
+    match /doccsCache/{queryHash} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
   }
 }
