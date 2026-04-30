@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { BookingData } from "./booking-wizard";
+import { DoccsLookupEmbed } from "./doccs-lookup-embed";
+import { facilities } from "@/data/facilities";
 
 interface Props {
   data: Partial<BookingData>;
@@ -10,43 +12,25 @@ interface Props {
   onBack: () => void;
 }
 
+// DIN format: 2-digit year + letter + 4 digits, e.g. 24B1234
+const DIN_PATTERN = /^\d{2}[A-Z]\d{4}$/;
+
 export function StepInmate({ data, updateData, onNext, onBack }: Props) {
-  const [lookupMode, setLookupMode] = useState<"name" | "din">("name");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<
-    { din: string; name: string; facility: string }[] | null
-  >(null);
-  const [searching, setSearching] = useState(false);
+  const [showLookup, setShowLookup] = useState(false);
 
-  const handleSearch = async () => {
-    setSearching(true);
-    // In production this calls NYS DOCCS Inmate Population Search API / scraper
-    // For now, simulate a result after a delay
-    await new Promise((r) => setTimeout(r, 800));
-    setSearchResults([
-      {
-        din: "24B1234",
-        name: searchQuery || "Sample Inmate",
-        facility: "Wende Correctional Facility",
-      },
-    ]);
-    setSearching(false);
-  };
+  const din = (data.inmateDIN || "").toUpperCase();
+  const dinValid = DIN_PATTERN.test(din);
+  const dinTouched = din.length > 0;
 
-  const selectInmate = (result: {
-    din: string;
-    name: string;
-    facility: string;
-  }) => {
-    const parts = result.name.split(" ");
-    updateData({
-      inmateDIN: result.din,
-      inmateName: result.name,
-      inmateLastName: parts[parts.length - 1] || "",
-    });
-  };
+  const sortedFacilities = useMemo(
+    () => [...facilities].sort((a, b) => a.name.localeCompare(b.name)),
+    [],
+  );
 
-  const canProceed = data.inmateDIN && data.inmateName;
+  const selectedFacility = facilities.find((f) => f.id === data.facilityId);
+
+  const canProceed =
+    dinValid && (data.inmateName || "").trim().length >= 2;
 
   return (
     <div>
@@ -54,113 +38,117 @@ export function StepInmate({ data, updateData, onNext, onBack }: Props) {
         Step 2: Inmate Information
       </h2>
       <p className="text-sm text-gray-500 mb-6">
-        Look up your loved one so we can show the correct visiting schedule.
+        Enter your loved one&apos;s DIN. We&apos;ll match the visiting schedule to
+        the correct facility. Use the official lookup below if you need to
+        confirm their current location.
       </p>
 
-      {/* Toggle lookup mode */}
-      <div className="flex gap-2 mb-6">
-        <button
-          onClick={() => setLookupMode("name")}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            lookupMode === "name"
-              ? "bg-primary text-white"
-              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-          }`}
-        >
-          Search by Name
-        </button>
-        <button
-          onClick={() => setLookupMode("din")}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            lookupMode === "din"
-              ? "bg-primary text-white"
-              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-          }`}
-        >
-          Enter DIN Directly
-        </button>
+      <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            DIN (Departmental Identification Number)
+          </label>
+          <input
+            type="text"
+            placeholder="e.g. 24B1234"
+            maxLength={7}
+            value={din}
+            onChange={(e) =>
+              updateData({ inmateDIN: e.target.value.toUpperCase() })
+            }
+            className={`w-full border rounded-xl px-4 py-3 text-sm font-mono uppercase tracking-wider focus:outline-none focus:ring-2 ${
+              dinTouched && !dinValid
+                ? "border-red-300 focus:ring-red-300"
+                : "border-gray-200 focus:ring-accent"
+            }`}
+          />
+          <p className="mt-1 text-xs text-gray-500">
+            Format: 2-digit year + letter + 4 digits (e.g. <code>24B1234</code>).
+          </p>
+          {dinTouched && !dinValid && (
+            <p className="mt-1 text-xs text-red-600">
+              That doesn&apos;t look like a valid DIN format.
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Inmate&apos;s Full Name
+          </label>
+          <input
+            type="text"
+            placeholder="First Last"
+            value={data.inmateName || ""}
+            onChange={(e) => {
+              const name = e.target.value;
+              const parts = name.trim().split(/\s+/);
+              updateData({
+                inmateName: name,
+                inmateLastName: parts[parts.length - 1] || "",
+              });
+            }}
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Current Facility
+          </label>
+          <select
+            value={data.facilityId || ""}
+            onChange={(e) => updateData({ facilityId: e.target.value })}
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-accent"
+          >
+            <option value="">Select facility…</option>
+            {sortedFacilities.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name} — {f.location}
+              </option>
+            ))}
+          </select>
+          {selectedFacility && (
+            <p className="mt-1 text-xs text-gray-500">
+              Visiting: {selectedFacility.visitingHours.days} ·{" "}
+              {selectedFacility.visitingHours.start}–
+              {selectedFacility.visitingHours.end}
+            </p>
+          )}
+        </div>
       </div>
 
-      {lookupMode === "name" ? (
-        <>
-          <div className="flex gap-3">
-            <input
-              type="text"
-              placeholder="Enter inmate's full name..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="flex-1 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-            />
+      <div className="mt-6 rounded-xl border border-gray-100 bg-surface p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-primary-dark text-sm">
+              🔎 Verify with the official DOCCS Lookup
+            </h3>
+            <p className="text-xs text-gray-500 mt-1">
+              Confirm the current facility, parole hearing dates, and release
+              info directly from New York State&apos;s Department of Corrections
+              and Community Supervision.
+            </p>
+          </div>
+          {!showLookup && (
             <button
-              onClick={handleSearch}
-              disabled={!searchQuery.trim() || searching}
-              className="bg-primary hover:bg-primary-light disabled:opacity-40 text-white font-medium px-6 py-3 rounded-xl transition-colors text-sm"
+              onClick={() => setShowLookup(true)}
+              className="shrink-0 bg-primary hover:bg-primary-light text-white font-medium px-4 py-2 rounded-lg transition-colors text-xs"
             >
-              {searching ? "Searching..." : "Search"}
+              Open Lookup
             </button>
-          </div>
-
-          {searchResults && (
-            <div className="mt-4 space-y-2">
-              <p className="text-xs text-gray-400 uppercase font-semibold tracking-wider">
-                Results from NYS DOCCS
-              </p>
-              {searchResults.map((r) => (
-                <button
-                  key={r.din}
-                  onClick={() => selectInmate(r)}
-                  className={`w-full text-left p-4 rounded-xl border-2 transition-colors ${
-                    data.inmateDIN === r.din
-                      ? "border-accent bg-accent/5"
-                      : "border-gray-100 hover:border-gray-200"
-                  }`}
-                >
-                  <div className="font-semibold text-primary-dark">
-                    {r.name}
-                  </div>
-                  <div className="text-sm text-gray-500">
-                    DIN: {r.din} &middot; {r.facility}
-                  </div>
-                </button>
-              ))}
-            </div>
           )}
-        </>
-      ) : (
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              DIN (Departmental Identification Number)
-            </label>
-            <input
-              type="text"
-              placeholder="e.g. 24B1234"
-              value={data.inmateDIN || ""}
-              onChange={(e) => updateData({ inmateDIN: e.target.value })}
-              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Inmate&apos;s Full Name
-            </label>
-            <input
-              type="text"
-              placeholder="First Last"
-              value={data.inmateName || ""}
-              onChange={(e) => {
-                const name = e.target.value;
-                const parts = name.split(" ");
-                updateData({
-                  inmateName: name,
-                  inmateLastName: parts[parts.length - 1] || "",
-                });
-              }}
-              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-            />
-          </div>
         </div>
-      )}
+
+        {showLookup && (
+          <div className="mt-4">
+            <DoccsLookupEmbed
+              prefilledDIN={dinValid ? din : undefined}
+              onClose={() => setShowLookup(false)}
+            />
+          </div>
+        )}
+      </div>
 
       <div className="mt-8 flex justify-between">
         <button
