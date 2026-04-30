@@ -20,7 +20,7 @@ interface Props {
 
 const DIN_PATTERN = /^\d{2}[A-Z]\d{4}$/;
 
-type Mode = "din" | "name";
+type Mode = "din" | "name" | "browse";
 
 export function StepInmate({ data, updateData, onNext, onBack }: Props) {
   const [mode, setMode] = useState<Mode>("din");
@@ -166,6 +166,16 @@ export function StepInmate({ data, updateData, onNext, onBack }: Props) {
         >
           By Name
         </button>
+        <button
+          onClick={() => setMode("browse")}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            mode === "browse"
+              ? "bg-primary text-white"
+              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+          }`}
+        >
+          Browse DOCCS ↗
+        </button>
       </div>
 
       {mode === "din" ? (
@@ -186,7 +196,7 @@ export function StepInmate({ data, updateData, onNext, onBack }: Props) {
             Format: 2-digit year + letter + 4 digits.
           </p>
         </div>
-      ) : (
+      ) : mode === "name" ? (
         <div className="grid grid-cols-2 gap-3">
           <div className="col-span-2">
             <label className="block text-xs text-gray-600 mb-1">
@@ -235,15 +245,91 @@ export function StepInmate({ data, updateData, onNext, onBack }: Props) {
             />
           </div>
         </div>
+      ) : (
+        // Browse DOCCS mode — open live site in new tab, paste DIN back.
+        <div className="space-y-4">
+          <div className="rounded-xl border-2 border-dashed border-primary/30 bg-primary/5 p-5">
+            <p className="text-sm text-gray-700 leading-relaxed">
+              The official NYS DOCCS lookup blocks direct embedding for security
+              reasons. Open it in a new tab, find the person you&apos;re visiting,
+              then copy their <strong>DIN</strong> back here.
+            </p>
+            <a
+              href="https://nysdoccslookup.doccs.ny.gov/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-4 inline-flex items-center gap-2 bg-primary hover:bg-primary-light text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-colors"
+            >
+              Open DOCCS Lookup
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                className="w-4 h-4"
+              >
+                <path d="M14 3h7v7" />
+                <path d="M10 14L21 3" />
+                <path d="M21 14v7H3V3h7" />
+              </svg>
+            </a>
+            <ol className="mt-4 text-xs text-gray-600 list-decimal list-inside space-y-1">
+              <li>Search by name on the DOCCS site.</li>
+              <li>
+                Click the inmate row and copy the <strong>DIN</strong> (e.g.
+                <span className="font-mono"> 21A1153</span>).
+              </li>
+              <li>Paste it below and we&apos;ll fetch their facility & details.</li>
+            </ol>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-600 mb-1 font-semibold uppercase tracking-wider">
+              Paste DIN here
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="e.g. 21A1153"
+                maxLength={7}
+                value={dinInput}
+                onChange={(e) => setDinInput(e.target.value.toUpperCase())}
+                className={`flex-1 border rounded-xl px-4 py-3 text-sm font-mono uppercase tracking-wider focus:outline-none focus:ring-2 ${
+                  dinValid
+                    ? "border-gray-200 focus:ring-accent"
+                    : "border-red-300 focus:ring-red-300"
+                }`}
+              />
+              <button
+                onClick={() => {
+                  setMode("din");
+                  // run search after switching mode
+                  setTimeout(runSearch, 0);
+                }}
+                disabled={!DIN_PATTERN.test(dinInput.toUpperCase()) || searching}
+                className="bg-accent hover:bg-accent/90 disabled:opacity-40 text-white font-semibold px-5 rounded-xl text-sm transition-colors"
+              >
+                Look Up
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              We&apos;ll cross-reference DOCCS to fill facility, custody status,
+              and visiting info automatically.
+            </p>
+          </div>
+        </div>
       )}
 
-      <button
-        onClick={runSearch}
-        disabled={searching || signedIn === false}
-        className="mt-4 bg-primary hover:bg-primary-light disabled:opacity-40 text-white font-semibold px-6 py-3 rounded-xl transition-colors text-sm w-full sm:w-auto"
-      >
-        {searching ? "Searching DOCCS…" : "Search DOCCS"}
-      </button>
+      {mode !== "browse" && (
+        <button
+          onClick={runSearch}
+          disabled={searching || signedIn === false}
+          className="mt-4 bg-primary hover:bg-primary-light disabled:opacity-40 text-white font-semibold px-6 py-3 rounded-xl transition-colors text-sm w-full sm:w-auto"
+        >
+          {searching ? "Searching DOCCS…" : "Search DOCCS"}
+        </button>
+      )}
 
       {error && (
         <p className="mt-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
