@@ -43,19 +43,19 @@ export function Footer() {
             <h3 className="text-white font-semibold mb-3">Support</h3>
             <ul className="space-y-2 text-sm">
               <li>
-                <Link href="/faq" className="hover:text-accent transition-colors">
+                <Link href="/#knowledge" className="hover:text-accent transition-colors">
                   FAQ
                 </Link>
               </li>
               <li>
-                <Link href="/rules" className="hover:text-accent transition-colors">
+                <Link href="/#knowledge" className="hover:text-accent transition-colors">
                   Visiting Rules
                 </Link>
               </li>
               <li>
-                <Link href="/contact" className="hover:text-accent transition-colors">
+                <a href="mailto:dispatch@connetworktravel.com" className="hover:text-accent transition-colors">
                   Contact Us
-                </Link>
+                </a>
               </li>
             </ul>
           </div>
