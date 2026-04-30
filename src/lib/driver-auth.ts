@@ -26,7 +26,9 @@ const STORAGE_KEY = "ctnyc.driver.identity.v1";
 
 /** Replace with the OAuth Web Client ID from Google Cloud Console. */
 export const GOOGLE_CLIENT_ID =
-  "REPLACE_WITH_GOOGLE_OAUTH_WEB_CLIENT_ID.apps.googleusercontent.com";
+  process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ??
+  // Project: connect-travel-494912 (Web client)
+  "1032082418409-p3gahqlfvpua2th2nk5tabg9e907qfrg.apps.googleusercontent.com";
 
 /**
  * Allowlist of driver emails. In production this lives in the database
