@@ -19,6 +19,7 @@ import puppeteer, { Browser } from "puppeteer-core";
 import chromium from "@sparticuz/chromium";
 
 initializeApp();
+getFirestore().settings({ ignoreUndefinedProperties: true });
 setGlobalOptions({ region: "us-east1", maxInstances: 5 });
 
 const LOOKUP_URL = "https://nysdoccslookup.doccs.ny.gov/";
