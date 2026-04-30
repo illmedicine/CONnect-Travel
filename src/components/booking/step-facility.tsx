@@ -7,16 +7,20 @@ interface Props {
   data: Partial<BookingData>;
   updateData: (d: Partial<BookingData>) => void;
   onNext: () => void;
+  onBack?: () => void;
 }
 
-export function StepFacility({ data, updateData, onNext }: Props) {
+export function StepFacility({ data, updateData, onNext, onBack }: Props) {
+  const autoSelected = !!data.inmateDIN && !!data.facilityId;
   return (
     <div>
       <h2 className="text-xl font-bold text-primary-dark mb-1">
-        Step 1: Select a Facility
+        Step 2: Confirm Facility
       </h2>
       <p className="text-sm text-gray-500 mb-6">
-        Choose the correctional facility you plan to visit.
+        {autoSelected
+          ? "We auto-selected the facility from the DOCCS lookup. Confirm or change below."
+          : "Choose the correctional facility you plan to visit."}
       </p>
 
       <div className="grid grid-cols-1 gap-3">
@@ -58,7 +62,15 @@ export function StepFacility({ data, updateData, onNext }: Props) {
         ))}
       </div>
 
-      <div className="mt-8 flex justify-end">
+      <div className="mt-8 flex justify-between">
+        {onBack ? (
+          <button
+            onClick={onBack}
+            className="text-gray-500 hover:text-primary-dark text-sm font-medium"
+          >
+            ← Back
+          </button>
+        ) : <div />}
         <button
           onClick={onNext}
           disabled={!data.facilityId}

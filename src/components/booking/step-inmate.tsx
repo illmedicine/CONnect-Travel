@@ -15,7 +15,7 @@ interface Props {
   data: Partial<BookingData>;
   updateData: (d: Partial<BookingData>) => void;
   onNext: () => void;
-  onBack: () => void;
+  onBack?: () => void;
 }
 
 const DIN_PATTERN = /^\d{2}[A-Z]\d{4}$/;
@@ -87,7 +87,11 @@ export function StepInmate({ data, updateData, onNext, onBack }: Props) {
         );
       }
       if (res.inmates.length === 0 && res.message) {
-        setError(res.message);
+        setError(
+          res.debugSnippet
+            ? `${res.message}\n\nDiagnostic: ${res.debugSnippet}`
+            : res.message,
+        );
       }
     } catch (e) {
       const code = (e as { code?: string }).code;
@@ -130,7 +134,7 @@ export function StepInmate({ data, updateData, onNext, onBack }: Props) {
   return (
     <div>
       <h2 className="text-xl font-bold text-primary-dark mb-1">
-        Step 2: Inmate Information
+        Step 1: Inmate Information
       </h2>
       <p className="text-sm text-gray-500 mb-6">
         Search the official New York State DOCCS roster by DIN or last name.
@@ -332,7 +336,7 @@ export function StepInmate({ data, updateData, onNext, onBack }: Props) {
       )}
 
       {error && (
-        <p className="mt-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+        <p className="mt-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 whitespace-pre-wrap break-words">
           {error}
         </p>
       )}
@@ -413,12 +417,14 @@ export function StepInmate({ data, updateData, onNext, onBack }: Props) {
       )}
 
       <div className="mt-8 flex justify-between">
-        <button
-          onClick={onBack}
-          className="text-gray-500 hover:text-gray-700 font-medium px-6 py-3 transition-colors"
-        >
-          ← Back
-        </button>
+        {onBack ? (
+          <button
+            onClick={onBack}
+            className="text-gray-500 hover:text-gray-700 font-medium px-6 py-3 transition-colors"
+          >
+            ← Back
+          </button>
+        ) : <div />}
         <button
           onClick={onNext}
           disabled={!canProceed}

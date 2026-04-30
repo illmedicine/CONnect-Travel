@@ -12,6 +12,7 @@
 
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { setGlobalOptions } from "firebase-functions/v2";
+import * as logger from "firebase-functions/logger";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import * as crypto from "crypto";
@@ -64,6 +65,7 @@ interface SearchResult {
   query: SearchInput;
   inmates: InmateRecord[];
   message?: string;
+  debugSnippet?: string;
   fetchedAtIso: string;
   cached: boolean;
 }
@@ -80,7 +82,7 @@ function sanitize(input: SearchInput): SearchInput {
   };
 }
 
-const PARSER_VERSION = "v2";
+const PARSER_VERSION = "v3";
 
 function hashQuery(q: SearchInput): string {
   const canonical = JSON.stringify({ ...q, _v: PARSER_VERSION }, Object.keys(q).sort().concat("_v"));
@@ -109,21 +111,12 @@ async function performSearch(q: SearchInput): Promise<SearchResult> {
     await page.goto(LOOKUP_URL, { waitUntil: "networkidle2", timeout: 30_000 });
 
     // Wait for the Blazor app to render the search form.
-    await page.waitForSelector('input[id*="DIN" i], input[name*="din" i], #DIN', {
-      timeout: 25_000,
-    });
+    await page.waitForSelector("input", { timeout: 25_000 });
+    // Give Blazor's component tree a beat to settle.
+    await new Promise((r) => setTimeout(r, 800));
 
     if (q.din) {
-      await page.evaluate((value) => {
-        const el = document.querySelector<HTMLInputElement>(
-          'input[id*="DIN" i], input[name*="din" i], #DIN',
-        );
-        if (el) {
-          el.value = value;
-          el.dispatchEvent(new Event("input", { bubbles: true }));
-          el.dispatchEvent(new Event("change", { bubbles: true }));
-        }
-      }, q.din);
+      await typeFieldByLabel(page, "DIN", q.din);
     } else if (q.lastName) {
       await typeFieldByLabel(page, "Last", q.lastName);
       if (q.firstName) await typeFieldByLabel(page, "First", q.firstName);
@@ -145,12 +138,18 @@ async function performSearch(q: SearchInput): Promise<SearchResult> {
       btn?.click();
     });
 
-    // Wait for results table OR a "no results" message.
+    // Wait until either a results table OR a "no results" message appears,
+    // and the result content is no longer the search form itself.
     await page.waitForFunction(
       () => {
         const text = document.body.innerText.toLowerCase();
+        const tables = document.querySelectorAll("table");
+        // Need at least one table that has body rows (not the empty form).
+        const hasResultTable = Array.from(tables).some(
+          (t) => t.querySelectorAll("tbody tr, tr").length > 1,
+        );
         return (
-          document.querySelector("table") ||
+          hasResultTable ||
           text.includes("no offender") ||
           text.includes("no results") ||
           text.includes("no matches") ||
@@ -161,24 +160,35 @@ async function performSearch(q: SearchInput): Promise<SearchResult> {
     );
 
     // Allow render to settle.
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 800));
 
     const inmates = await page.evaluate(extractInmateRecordsInBrowser);
-    const message =
-      inmates.length === 0
-        ? (await page.evaluate(() => {
-            const text = document.body.innerText;
-            const match = text.match(
-              /(no offender[^.\n]*|no results[^.\n]*|no matches[^.\n]*|not found[^.\n]*)/i,
-            );
-            return match ? match[0].trim() : "No records returned.";
-          }))
-        : undefined;
+    let message: string | undefined;
+    let debugSnippet: string | undefined;
+    if (inmates.length === 0) {
+      const debug = await page.evaluate(() => {
+        const text = document.body.innerText;
+        const match = text.match(
+          /(no offender[^.\n]*|no results[^.\n]*|no matches[^.\n]*|not found[^.\n]*)/i,
+        );
+        return {
+          msg: match ? match[0].trim() : null,
+          // First 800 chars of visible text + table count, for debugging.
+          snippet: text.slice(0, 800),
+          tableCount: document.querySelectorAll("table").length,
+          url: location.href,
+        };
+      });
+      message = debug.msg ?? "No records returned.";
+      debugSnippet = `tables=${debug.tableCount} url=${debug.url} text="${debug.snippet.replace(/\s+/g, " ").slice(0, 400)}"`;
+      logger.info("doccs empty result", { query: q, debug });
+    }
 
     return {
       query: q,
       inmates,
       message,
+      debugSnippet,
       fetchedAtIso: new Date().toISOString(),
       cached: false,
     };
@@ -192,27 +202,60 @@ async function typeFieldByLabel(
   labelHint: string,
   value: string,
 ): Promise<void> {
+  // Resolve the input element via its <label> association OR via
+  // placeholder/aria-label/name fallback.
   const handle = await page.evaluateHandle((hint) => {
+    const lower = hint.toLowerCase();
+    // Strategy 1: label by text → for=id
     const labels = Array.from(document.querySelectorAll("label"));
     const lbl = labels.find((l) =>
-      (l.textContent || "").toLowerCase().includes(hint.toLowerCase()),
+      (l.textContent || "").toLowerCase().includes(lower),
     );
-    if (!lbl) return null;
-    const forId = lbl.getAttribute("for");
-    if (forId) {
-      const byId = document.getElementById(forId);
-      if (byId) return byId;
+    if (lbl) {
+      const forId = lbl.getAttribute("for");
+      if (forId) {
+        const byId = document.getElementById(forId);
+        if (byId) return byId;
+      }
+      const sib = lbl.parentElement?.querySelector("input,select");
+      if (sib) return sib;
     }
-    return lbl.parentElement?.querySelector("input") ?? null;
+    // Strategy 2: placeholder / aria-label / name / id
+    const inputs = Array.from(
+      document.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+        "input,select",
+      ),
+    );
+    return (
+      inputs.find((el) => {
+        const attrs = [
+          el.getAttribute("placeholder"),
+          el.getAttribute("aria-label"),
+          el.getAttribute("name"),
+          el.getAttribute("id"),
+          el.getAttribute("title"),
+        ]
+          .filter(Boolean)
+          .map((s) => (s as string).toLowerCase());
+        return attrs.some((a) => a.includes(lower));
+      }) ?? null
+    );
   }, labelHint);
+
   const el = handle.asElement();
   if (!el) return;
-  await el.evaluate((node, v) => {
-    const input = node as HTMLInputElement;
-    input.value = v;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  }, value);
+
+  // Focus, clear, and type — keystrokes drive Blazor InputText binding.
+  await el.evaluate((node) => {
+    (node as HTMLInputElement).focus();
+    (node as HTMLInputElement).value = "";
+  });
+  await page.keyboard.type(value, { delay: 25 });
+  // Fire change so Blazor's @onchange handlers commit the value.
+  await el.evaluate((node) => {
+    node.dispatchEvent(new Event("change", { bubbles: true }));
+    (node as HTMLInputElement).blur();
+  });
 }
 
 /** Runs inside the browser context. */

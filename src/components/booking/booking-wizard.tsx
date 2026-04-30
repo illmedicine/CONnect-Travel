@@ -21,8 +21,8 @@ export interface BookingData {
 }
 
 const STEPS = [
-  { id: 1, label: "Facility" },
-  { id: 2, label: "Inmate Info" },
+  { id: 1, label: "Inmate Info" },
+  { id: 2, label: "Facility" },
   { id: 3, label: "Visit Date" },
   { id: 4, label: "Passengers" },
   { id: 5, label: "Review" },
@@ -76,15 +76,14 @@ export function BookingWizard() {
       {/* Step content */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sm:p-8">
         {step === 1 && (
-          <StepFacility data={data} updateData={updateData} onNext={next} />
-        )}
-        {step === 2 && (
           <StepInmate
             data={data}
             updateData={updateData}
             onNext={next}
-            onBack={back}
           />
+        )}
+        {step === 2 && (
+          <StepFacility data={data} updateData={updateData} onNext={next} onBack={back} />
         )}
         {step === 3 && (
           <StepDate

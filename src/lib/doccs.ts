@@ -33,6 +33,7 @@ export interface DoccsSearchResult {
   query: DoccsSearchInput;
   inmates: DoccsInmateRecord[];
   message?: string;
+  debugSnippet?: string;
   fetchedAtIso: string;
   cached: boolean;
 }
