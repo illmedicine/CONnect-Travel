@@ -82,7 +82,7 @@ function sanitize(input: SearchInput): SearchInput {
   };
 }
 
-const PARSER_VERSION = "v3";
+const PARSER_VERSION = "v4";
 
 function hashQuery(q: SearchInput): string {
   const canonical = JSON.stringify({ ...q, _v: PARSER_VERSION }, Object.keys(q).sort().concat("_v"));
@@ -130,37 +130,62 @@ async function performSearch(q: SearchInput): Promise<SearchResult> {
       );
     }
 
-    // Click Search.
-    await page.evaluate(() => {
-      const btn = Array.from(document.querySelectorAll("button")).find(
+    // Click Search. Capture the search button so we can also try keyboard-Enter.
+    const submitted = await page.evaluate(() => {
+      const btn = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
         (b) => /^\s*search\s*$/i.test(b.textContent || ""),
       );
-      btn?.click();
+      if (btn) {
+        btn.click();
+        return true;
+      }
+      return false;
     });
+    if (!submitted) {
+      // Fallback: press Enter in the active input.
+      await page.keyboard.press("Enter");
+    }
 
-    // Wait until either a results table OR a "no results" message appears,
-    // and the result content is no longer the search form itself.
+    // Wait for results-specific markers (NOT just "any table" — the search
+    // form itself is laid out with tables, so that check matches immediately).
+    // DOCCS results page reliably contains a "Start a New Search" link and
+    // a header cell with DIN text.
     await page.waitForFunction(
       () => {
         const text = document.body.innerText.toLowerCase();
-        const tables = document.querySelectorAll("table");
-        // Need at least one table that has body rows (not the empty form).
-        const hasResultTable = Array.from(tables).some(
-          (t) => t.querySelectorAll("tbody tr, tr").length > 1,
-        );
-        return (
-          hasResultTable ||
+        if (
           text.includes("no offender") ||
           text.includes("no results") ||
           text.includes("no matches") ||
           text.includes("not found")
+        ) {
+          return true;
+        }
+        // Results page marker
+        if (/start a new search/i.test(document.body.innerText)) return true;
+        // Result rows: a header cell labeled DIN with body rows
+        const ths = Array.from(document.querySelectorAll("th"));
+        const hasDinHeader = ths.some((th) =>
+          /^\s*din\s*$/i.test(th.textContent || ""),
         );
+        if (hasDinHeader) {
+          // Need at least one body row that looks like a DIN (e.g. 21A1153)
+          const cells = Array.from(document.querySelectorAll("td"));
+          return cells.some((td) =>
+            /^\s*\d{2}[A-Z]\d{4}\s*$/.test(td.textContent || ""),
+          );
+        }
+        // Detail page: shows "DIN" label followed by a value
+        if (/department id number/i.test(document.body.innerText)) {
+          return /\d{2}[A-Z]\d{4}/.test(document.body.innerText);
+        }
+        return false;
       },
       { timeout: 25_000 },
     );
 
     // Allow render to settle.
-    await new Promise((r) => setTimeout(r, 800));
+    await new Promise((r) => setTimeout(r, 600));
 
     const inmates = await page.evaluate(extractInmateRecordsInBrowser);
     let message: string | undefined;
@@ -245,13 +270,39 @@ async function typeFieldByLabel(
   const el = handle.asElement();
   if (!el) return;
 
-  // Focus, clear, and type — keystrokes drive Blazor InputText binding.
+  // Click to focus (Blazor wires events on the focused element).
   await el.evaluate((node) => {
-    (node as HTMLInputElement).focus();
-    (node as HTMLInputElement).value = "";
+    const input = node as HTMLInputElement;
+    input.focus();
+    // Clear via select-all + delete keystrokes so binding fires.
   });
-  await page.keyboard.type(value, { delay: 25 });
-  // Fire change so Blazor's @onchange handlers commit the value.
+  await (el as import("puppeteer-core").ElementHandle<Element>)
+    .click({ clickCount: 3 })
+    .catch(() => undefined);
+  await page.keyboard.press("Backspace");
+
+  // Type with a small delay to mimic human keystrokes (Blazor binds on input event).
+  await page.keyboard.type(value, { delay: 30 });
+
+  // Verify the value actually stuck. If not, fall back to direct DOM set + dispatch.
+  const stuck = await el.evaluate(
+    (node, expected) => (node as HTMLInputElement).value === expected,
+    value,
+  );
+  if (!stuck) {
+    await el.evaluate((node, v) => {
+      const input = node as HTMLInputElement;
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(input, v);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }, value);
+  }
+
+  // Fire change + blur so Blazor's @onchange commits the value.
   await el.evaluate((node) => {
     node.dispatchEvent(new Event("change", { bubbles: true }));
     (node as HTMLInputElement).blur();
