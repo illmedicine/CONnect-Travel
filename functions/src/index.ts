@@ -82,7 +82,7 @@ function sanitize(input: SearchInput): SearchInput {
   };
 }
 
-const PARSER_VERSION = "v8";
+const PARSER_VERSION = "v9";
 
 function hashQuery(q: SearchInput): string {
   const canonical = JSON.stringify({ ...q, _v: PARSER_VERSION }, Object.keys(q).sort().concat("_v"));
@@ -196,43 +196,45 @@ async function performSearch(q: SearchInput): Promise<SearchResult> {
       }
     }
 
-    // Wait for results-specific markers (NOT just "any table" — the search
-    // form itself is laid out with tables, so that check matches immediately).
-    // DOCCS results page reliably contains a "Start a New Search" link and
-    // a header cell with DIN text.
+    // Wait for results: the DOCCS Blazor app replaces the form with results
+    // in-place. The form's instructional text ("Use Last Name alone...") is
+    // a reliable form-only marker. When it goes away, results have rendered.
+    // We capture it before submit so we can detect its disappearance.
+    const formMarker = "Use Last Name alone";
     await page.waitForFunction(
-      () => {
+      (marker: string) => {
         const text = document.body.innerText;
-        const lower = text.toLowerCase();
-        if (
-          lower.includes("no offender") ||
-          lower.includes("no results") ||
-          lower.includes("no matches") ||
-          lower.includes("not found") ||
-          lower.includes("system error")
-        ) {
-          return true;
+        const stillOnForm = text.includes(marker);
+        if (stillOnForm) {
+          // Check for inline error states that DO appear while still on form.
+          // SYSTEM ERROR shows below the form when DOCCS rejects the request.
+          const errMatch = text.match(/SYSTEM ERROR[^\n]*/);
+          if (errMatch) {
+            // Make sure it's not just hidden template text — look for it
+            // close to the top of body text (visible errors render near top).
+            // If it's visible, the surrounding 200 chars won't include the
+            // form's section labels "By DIN" etc.
+            const idx = text.indexOf(errMatch[0]);
+            const context = text.slice(Math.max(0, idx - 100), idx + 200);
+            if (
+              !context.includes("By DIN") &&
+              !context.includes("By Name") &&
+              !context.includes("By NYSID")
+            ) {
+              return true;
+            }
+          }
+          // No-results message also appears in-place.
+          if (/no offender|no results|no matches|not found/i.test(text)) {
+            return true;
+          }
+          return false;
         }
-        // Results page marker
-        if (/start a new search/i.test(text)) return true;
-        // Result rows: a header cell labeled DIN with body rows
-        const ths = Array.from(document.querySelectorAll("th"));
-        const hasDinHeader = ths.some((th) =>
-          /^\s*din\s*$/i.test(th.textContent || ""),
-        );
-        if (hasDinHeader) {
-          const cells = Array.from(document.querySelectorAll("td"));
-          return cells.some((td) =>
-            /^\s*\d{2}[A-Z]\d{4}\s*$/.test(td.textContent || ""),
-          );
-        }
-        // Detail page
-        if (/department id number/i.test(text)) {
-          return /\d{2}[A-Z]\d{4}/.test(text);
-        }
-        return false;
+        // Form gone → results rendered.
+        return true;
       },
       { timeout: 25_000 },
+      formMarker,
     );
 
     // Allow render to settle.
@@ -366,39 +368,49 @@ async function typeFieldByLabel(
     return;
   }
 
-  // Use ElementHandle.type() — handles focus + keystroke events natively.
-  // First clear any existing value via JS, then dispatch input/change so
-  // Blazor's two-way binding picks up the empty state.
-  await el.evaluate((node) => {
+  // Capture a stable selector for the input so we can re-query it after each
+  // keystroke (Blazor often re-renders the DOM node, which detaches our
+  // ElementHandle and silently drops subsequent typing).
+  const selector = await el.evaluate((node) => {
+    if (node.id) return `#${CSS.escape(node.id)}`;
+    if (node.name) return `input[name="${CSS.escape(node.name)}"]`;
+    const ph = node.getAttribute("placeholder");
+    if (ph) return `input[placeholder="${ph.replace(/"/g, '\\"')}"]`;
+    return "";
+  });
+
+  if (!selector) {
+    logger.warn("doccs: could not derive selector for input", { labelHint });
+    return;
+  }
+
+  // Clear any existing value.
+  await page.evaluate((sel) => {
+    const node = document.querySelector<HTMLInputElement>(sel);
+    if (!node) return;
     const setter = Object.getOwnPropertyDescriptor(
       HTMLInputElement.prototype,
       "value",
     )?.set;
     setter?.call(node, "");
     node.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+  }, selector);
 
-  // Real mouse click activates the input the way Blazor expects (mousedown,
-  // mouseup, click, focus all fire). focus() alone is not enough for some
-  // Blazor input wrappers.
-  await el.click({ delay: 20 });
-  await el.type(value, { delay: 60 });
+  // Click via selector (Puppeteer re-queries the DOM, immune to re-render).
+  await page.click(selector);
 
-  // Press Tab to fire a real change/blur sequence — this is what commits
-  // the value into Blazor's bound C# state when @bind is on `change` event.
-  await page.keyboard.press("Tab");
+  // Type one char at a time via page.type. Puppeteer's page.type re-queries
+  // the selector before each key, so it survives Blazor re-renders.
+  await page.type(selector, value, { delay: 80 });
 
-  // Verify the value stuck. If not, set via prototype setter + dispatch.
-  const stuck = await el.evaluate(
-    (node, expected) => node.value === expected,
-    value,
-  );
-  if (!stuck) {
-    logger.warn("doccs: typing did not stick, falling back to setter", {
-      labelHint,
-      value,
-    });
-    await el.evaluate((node, v) => {
+  // Force-set the value via the prototype setter to guarantee the DOM node
+  // (which Blazor reads from) has the full string, and dispatch input+change
+  // so Blazor's @bind handlers fire. This is belt-and-suspenders for cases
+  // where keystroke events were dropped during a re-render.
+  await page.evaluate(
+    (sel, v) => {
+      const node = document.querySelector<HTMLInputElement>(sel);
+      if (!node) return;
       const setter = Object.getOwnPropertyDescriptor(
         HTMLInputElement.prototype,
         "value",
@@ -406,8 +418,13 @@ async function typeFieldByLabel(
       setter?.call(node, v);
       node.dispatchEvent(new Event("input", { bubbles: true }));
       node.dispatchEvent(new Event("change", { bubbles: true }));
-    }, value);
-  }
+    },
+    selector,
+    value,
+  );
+
+  // Tab to commit (fires blur/change, which is the default Blazor @bind event).
+  await page.keyboard.press("Tab");
 }
 
 /** Runs inside the browser context. */
