@@ -82,7 +82,7 @@ function sanitize(input: SearchInput): SearchInput {
   };
 }
 
-const PARSER_VERSION = "v6";
+const PARSER_VERSION = "v7";
 
 function hashQuery(q: SearchInput): string {
   const canonical = JSON.stringify({ ...q, _v: PARSER_VERSION }, Object.keys(q).sort().concat("_v"));
@@ -461,19 +461,42 @@ function extractInmateRecordsInBrowser(): InmateRecord[] {
     const rows = Array.from(t.querySelectorAll("tr"));
     if (rows.length === 0) continue;
 
-    // Detect header row: <thead> present OR first row contains only <th>
+    // Detect header row by structure or content.
     const theadCells = Array.from(t.querySelectorAll("thead th"));
     const firstRowThs = rows[0].querySelectorAll("th");
     const firstRowTds = rows[0].querySelectorAll("td");
+    const firstRowAllCells = Array.from(rows[0].querySelectorAll("td,th"));
+
+    // Content heuristic: first row's cells look like field labels?
+    // - At least 3 cells AND
+    // - >=60% of cells match a known field label (DIN, Name, Race/Ethnicity, etc.)
+    //   OR end with ":"
+    const KNOWN_LABEL_RE =
+      /^(din|name|race|ethnicity|date of birth|sex|custody|housing|releasing|facility|county|received|admission|department|earliest release|parole|conditional|maximum|expiration)/i;
+    const labelHits = firstRowAllCells.filter((c) => {
+      const txt = (c.textContent || "").trim();
+      if (!txt) return false;
+      if (txt.endsWith(":")) return true;
+      return KNOWN_LABEL_RE.test(txt);
+    }).length;
+    const looksLikeHeaderByContent =
+      firstRowAllCells.length >= 3 &&
+      labelHits / firstRowAllCells.length >= 0.6;
+
     const hasHeaderRow =
       theadCells.length > 0 ||
-      (firstRowThs.length > 0 && firstRowTds.length === 0);
+      (firstRowThs.length > 0 && firstRowTds.length === 0) ||
+      looksLikeHeaderByContent;
 
     if (hasHeaderRow) {
       // Columnar table: one inmate per body row.
-      const headers = (
-        theadCells.length > 0 ? theadCells : Array.from(firstRowThs)
-      ).map((c) => (c.textContent || "").trim().replace(/:$/, ""));
+      const headerCells =
+        theadCells.length > 0
+          ? theadCells
+          : firstRowAllCells;
+      const headers = headerCells.map((c) =>
+        (c.textContent || "").trim().replace(/:$/, ""),
+      );
 
       const bodyRows =
         theadCells.length > 0
@@ -483,6 +506,11 @@ function extractInmateRecordsInBrowser(): InmateRecord[] {
       for (const tr of bodyRows) {
         const cells = Array.from(tr.querySelectorAll("td,th"));
         if (cells.length === 0) continue;
+        // Skip rows that look like another header (defensive).
+        const allEmpty = cells.every(
+          (c) => !(c.textContent || "").trim(),
+        );
+        if (allEmpty) continue;
         const raw: Record<string, string> = {};
         cells.forEach((c, i) => {
           const k = headers[i];
@@ -537,13 +565,19 @@ function extractInmateRecordsInBrowser(): InmateRecord[] {
       ),
     );
     for (const el of candidates) {
+      // Only consider leaf-ish elements (no nested block descendants that
+      // also match the pattern), to avoid capturing a labels-only block as
+      // one big "Label: rest-of-labels" pair.
       const txt = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (!txt || txt.length > 200) continue;
+      // Reject text that contains another label colon (catches concatenated
+      // header rows like "DIN: Race/Ethnicity: Date of Birth:").
+      if ((txt.match(/:/g) || []).length > 1) continue;
       const m = txt.match(/^([A-Za-z][A-Za-z /()\-]{1,40}):\s*(.+)$/);
       if (m) {
         const k = m[1].trim();
         const v = m[2].trim();
-        // Skip if the value is itself another label (nested capture).
-        if (v.length < 200 && !raw[k]) raw[k] = v;
+        if (v && !v.endsWith(":") && !raw[k]) raw[k] = v;
       }
     }
 
