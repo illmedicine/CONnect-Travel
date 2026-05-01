@@ -82,7 +82,7 @@ function sanitize(input: SearchInput): SearchInput {
   };
 }
 
-const PARSER_VERSION = "v7";
+const PARSER_VERSION = "v8";
 
 function hashQuery(q: SearchInput): string {
   const canonical = JSON.stringify({ ...q, _v: PARSER_VERSION }, Object.keys(q).sort().concat("_v"));
@@ -153,30 +153,47 @@ async function performSearch(q: SearchInput): Promise<SearchResult> {
     });
     logger.info("doccs form state before submit", { query: q, formState });
 
-    // Click Search. The DOCCS button is rendered as either a <button> or
-    // <input type="submit"|"button"> with text "Search".
-    const submitted = await page.evaluate(() => {
-      const all = Array.from(
-        document.querySelectorAll<HTMLElement>(
-          'button, input[type="submit"], input[type="button"]',
-        ),
+    // Give Blazor a moment to process any pending state updates from typing.
+    await new Promise((r) => setTimeout(r, 800));
+
+    // Submit. Blazor forms reliably respond to Enter while focus is in the
+    // form. Press Enter first; if that doesn't navigate, click Search.
+    await page.keyboard.press("Enter");
+    await new Promise((r) => setTimeout(r, 600));
+
+    // If still on form (no SYSTEM ERROR / results / nav change), click button.
+    const stillOnForm = await page.evaluate(() => {
+      const t = document.body.innerText.toLowerCase();
+      return (
+        !t.includes("start a new search") &&
+        !t.includes("system error") &&
+        !t.includes("no offender") &&
+        !t.includes("no results")
       );
-      const btn = all.find((b) => {
-        const text =
-          b.tagName === "INPUT"
-            ? (b as HTMLInputElement).value
-            : b.textContent || "";
-        return /^\s*search\s*$/i.test(text);
-      });
-      if (btn) {
-        (btn as HTMLElement).click();
-        return true;
-      }
-      return false;
     });
-    if (!submitted) {
-      logger.warn("doccs: search button not found, trying Enter key");
-      await page.keyboard.press("Enter");
+    if (stillOnForm) {
+      const submitted = await page.evaluate(() => {
+        const all = Array.from(
+          document.querySelectorAll<HTMLElement>(
+            'button, input[type="submit"], input[type="button"]',
+          ),
+        );
+        const btn = all.find((b) => {
+          const text =
+            b.tagName === "INPUT"
+              ? (b as HTMLInputElement).value
+              : b.textContent || "";
+          return /^\s*search\s*$/i.test(text);
+        });
+        if (btn) {
+          (btn as HTMLElement).click();
+          return true;
+        }
+        return false;
+      });
+      if (!submitted) {
+        logger.warn("doccs: search button not found");
+      }
     }
 
     // Wait for results-specific markers (NOT just "any table" — the search
@@ -360,8 +377,16 @@ async function typeFieldByLabel(
     setter?.call(node, "");
     node.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  await el.focus();
-  await el.type(value, { delay: 30 });
+
+  // Real mouse click activates the input the way Blazor expects (mousedown,
+  // mouseup, click, focus all fire). focus() alone is not enough for some
+  // Blazor input wrappers.
+  await el.click({ delay: 20 });
+  await el.type(value, { delay: 60 });
+
+  // Press Tab to fire a real change/blur sequence — this is what commits
+  // the value into Blazor's bound C# state when @bind is on `change` event.
+  await page.keyboard.press("Tab");
 
   // Verify the value stuck. If not, set via prototype setter + dispatch.
   const stuck = await el.evaluate(
@@ -383,12 +408,6 @@ async function typeFieldByLabel(
       node.dispatchEvent(new Event("change", { bubbles: true }));
     }, value);
   }
-
-  // Always fire change + blur so Blazor commits the value.
-  await el.evaluate((node) => {
-    node.dispatchEvent(new Event("change", { bubbles: true }));
-    node.blur();
-  });
 }
 
 /** Runs inside the browser context. */
