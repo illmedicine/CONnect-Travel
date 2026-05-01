@@ -82,7 +82,7 @@ function sanitize(input: SearchInput): SearchInput {
   };
 }
 
-const PARSER_VERSION = "v4";
+const PARSER_VERSION = "v5";
 
 function hashQuery(q: SearchInput): string {
   const canonical = JSON.stringify({ ...q, _v: PARSER_VERSION }, Object.keys(q).sort().concat("_v"));
@@ -115,6 +115,32 @@ async function performSearch(q: SearchInput): Promise<SearchResult> {
     // Give Blazor's component tree a beat to settle.
     await new Promise((r) => setTimeout(r, 800));
 
+    // Select the correct search mode radio (By DIN / By Name).
+    // The form has radio buttons that gate which input set is enabled.
+    await page.evaluate((mode) => {
+      const radios = Array.from(
+        document.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
+      );
+      const target = radios.find((r) => {
+        // Find the label associated with this radio.
+        let labelText = "";
+        if (r.id) {
+          const lbl = document.querySelector(`label[for="${r.id}"]`);
+          if (lbl) labelText = (lbl.textContent || "").toLowerCase();
+        }
+        if (!labelText && r.parentElement) {
+          labelText = (r.parentElement.textContent || "").toLowerCase();
+        }
+        return labelText.includes(mode);
+      });
+      if (target && !target.checked) {
+        target.click();
+        target.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    }, q.din ? "din" : "name");
+    // Let the form re-render after radio change.
+    await new Promise((r) => setTimeout(r, 400));
+
     if (q.din) {
       await typeFieldByLabel(page, "DIN", q.din);
     } else if (q.lastName) {
@@ -129,6 +155,22 @@ async function performSearch(q: SearchInput): Promise<SearchResult> {
         "Provide either a DIN or a last name.",
       );
     }
+
+    // Verify at least one input has a value matching what we typed.
+    const formState = await page.evaluate(() => {
+      const inputs = Array.from(
+        document.querySelectorAll<HTMLInputElement>("input"),
+      );
+      return inputs
+        .filter((i) => i.type !== "radio" && i.type !== "submit" && i.value)
+        .map((i) => ({
+          id: i.id,
+          name: i.name,
+          placeholder: i.placeholder,
+          value: i.value,
+        }));
+    });
+    logger.info("doccs form state before submit", { query: q, formState });
 
     // Click Search. Capture the search button so we can also try keyboard-Enter.
     const submitted = await page.evaluate(() => {
@@ -152,32 +194,33 @@ async function performSearch(q: SearchInput): Promise<SearchResult> {
     // a header cell with DIN text.
     await page.waitForFunction(
       () => {
-        const text = document.body.innerText.toLowerCase();
+        const text = document.body.innerText;
+        const lower = text.toLowerCase();
         if (
-          text.includes("no offender") ||
-          text.includes("no results") ||
-          text.includes("no matches") ||
-          text.includes("not found")
+          lower.includes("no offender") ||
+          lower.includes("no results") ||
+          lower.includes("no matches") ||
+          lower.includes("not found") ||
+          lower.includes("system error")
         ) {
           return true;
         }
         // Results page marker
-        if (/start a new search/i.test(document.body.innerText)) return true;
+        if (/start a new search/i.test(text)) return true;
         // Result rows: a header cell labeled DIN with body rows
         const ths = Array.from(document.querySelectorAll("th"));
         const hasDinHeader = ths.some((th) =>
           /^\s*din\s*$/i.test(th.textContent || ""),
         );
         if (hasDinHeader) {
-          // Need at least one body row that looks like a DIN (e.g. 21A1153)
           const cells = Array.from(document.querySelectorAll("td"));
           return cells.some((td) =>
             /^\s*\d{2}[A-Z]\d{4}\s*$/.test(td.textContent || ""),
           );
         }
-        // Detail page: shows "DIN" label followed by a value
-        if (/department id number/i.test(document.body.innerText)) {
-          return /\d{2}[A-Z]\d{4}/.test(document.body.innerText);
+        // Detail page
+        if (/department id number/i.test(text)) {
+          return /\d{2}[A-Z]\d{4}/.test(text);
         }
         return false;
       },
@@ -228,9 +271,12 @@ async function typeFieldByLabel(
   value: string,
 ): Promise<void> {
   // Resolve the input element via its <label> association OR via
-  // placeholder/aria-label/name fallback.
+  // placeholder/aria-label/name fallback. The DOCCS form lays labels and
+  // inputs in adjacent <td> cells, so we walk up to the row and search
+  // sibling cells too.
   const handle = await page.evaluateHandle((hint) => {
     const lower = hint.toLowerCase();
+
     // Strategy 1: label by text → for=id
     const labels = Array.from(document.querySelectorAll("label"));
     const lbl = labels.find((l) =>
@@ -240,12 +286,29 @@ async function typeFieldByLabel(
       const forId = lbl.getAttribute("for");
       if (forId) {
         const byId = document.getElementById(forId);
-        if (byId) return byId;
+        if (byId && (byId.tagName === "INPUT" || byId.tagName === "SELECT")) {
+          return byId;
+        }
       }
-      const sib = lbl.parentElement?.querySelector("input,select");
-      if (sib) return sib;
+      // Look in the same <td>, then siblings of that <td>, then closest <tr>.
+      const cell = lbl.closest("td,th,div,fieldset");
+      const inSame = cell?.querySelector("input,select");
+      if (inSame) return inSame;
+      const row = lbl.closest("tr");
+      if (row) {
+        const inRow = row.querySelector("input,select");
+        if (inRow) return inRow;
+      }
+      // Walk forward through following siblings of cell.
+      let sib = cell?.nextElementSibling;
+      while (sib) {
+        const found = sib.querySelector("input,select");
+        if (found) return found;
+        sib = sib.nextElementSibling;
+      }
     }
-    // Strategy 2: placeholder / aria-label / name / id
+
+    // Strategy 2: placeholder / aria-label / name / id / preceding label text
     const inputs = Array.from(
       document.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
         "input,select",
@@ -262,7 +325,14 @@ async function typeFieldByLabel(
         ]
           .filter(Boolean)
           .map((s) => (s as string).toLowerCase());
-        return attrs.some((a) => a.includes(lower));
+        if (attrs.some((a) => a.includes(lower))) return true;
+        // Also check preceding text in the row.
+        const row = el.closest("tr");
+        if (row) {
+          const rowText = (row.textContent || "").toLowerCase();
+          if (rowText.includes(lower)) return true;
+        }
+        return false;
       }) ?? null
     );
   }, labelHint);
