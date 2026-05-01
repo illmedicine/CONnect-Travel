@@ -82,7 +82,7 @@ function sanitize(input: SearchInput): SearchInput {
   };
 }
 
-const PARSER_VERSION = "v5";
+const PARSER_VERSION = "v6";
 
 function hashQuery(q: SearchInput): string {
   const canonical = JSON.stringify({ ...q, _v: PARSER_VERSION }, Object.keys(q).sort().concat("_v"));
@@ -112,34 +112,15 @@ async function performSearch(q: SearchInput): Promise<SearchResult> {
 
     // Wait for the Blazor app to render the search form.
     await page.waitForSelector("input", { timeout: 25_000 });
-    // Give Blazor's component tree a beat to settle.
-    await new Promise((r) => setTimeout(r, 800));
-
-    // Select the correct search mode radio (By DIN / By Name).
-    // The form has radio buttons that gate which input set is enabled.
-    await page.evaluate((mode) => {
-      const radios = Array.from(
-        document.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
-      );
-      const target = radios.find((r) => {
-        // Find the label associated with this radio.
-        let labelText = "";
-        if (r.id) {
-          const lbl = document.querySelector(`label[for="${r.id}"]`);
-          if (lbl) labelText = (lbl.textContent || "").toLowerCase();
-        }
-        if (!labelText && r.parentElement) {
-          labelText = (r.parentElement.textContent || "").toLowerCase();
-        }
-        return labelText.includes(mode);
-      });
-      if (target && !target.checked) {
-        target.click();
-        target.dispatchEvent(new Event("change", { bubbles: true }));
-      }
-    }, q.din ? "din" : "name");
-    // Let the form re-render after radio change.
-    await new Promise((r) => setTimeout(r, 400));
+    // Wait specifically for the DIN label to appear (Blazor render complete).
+    await page.waitForFunction(
+      () =>
+        Array.from(document.querySelectorAll("label,th,td,div,span")).some(
+          (el) => /\bDIN:?\s*$/i.test((el.textContent || "").trim()),
+        ),
+      { timeout: 15_000 },
+    );
+    await new Promise((r) => setTimeout(r, 500));
 
     if (q.din) {
       await typeFieldByLabel(page, "DIN", q.din);
@@ -172,19 +153,29 @@ async function performSearch(q: SearchInput): Promise<SearchResult> {
     });
     logger.info("doccs form state before submit", { query: q, formState });
 
-    // Click Search. Capture the search button so we can also try keyboard-Enter.
+    // Click Search. The DOCCS button is rendered as either a <button> or
+    // <input type="submit"|"button"> with text "Search".
     const submitted = await page.evaluate(() => {
-      const btn = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
-        (b) => /^\s*search\s*$/i.test(b.textContent || ""),
+      const all = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          'button, input[type="submit"], input[type="button"]',
+        ),
       );
+      const btn = all.find((b) => {
+        const text =
+          b.tagName === "INPUT"
+            ? (b as HTMLInputElement).value
+            : b.textContent || "";
+        return /^\s*search\s*$/i.test(text);
+      });
       if (btn) {
-        btn.click();
+        (btn as HTMLElement).click();
         return true;
       }
       return false;
     });
     if (!submitted) {
-      // Fallback: press Enter in the active input.
+      logger.warn("doccs: search button not found, trying Enter key");
       await page.keyboard.press("Enter");
     }
 
@@ -270,19 +261,16 @@ async function typeFieldByLabel(
   labelHint: string,
   value: string,
 ): Promise<void> {
-  // Resolve the input element via its <label> association OR via
-  // placeholder/aria-label/name fallback. The DOCCS form lays labels and
-  // inputs in adjacent <td> cells, so we walk up to the row and search
-  // sibling cells too.
+  // Find an input near the label text. The DOCCS form is a table layout where
+  // a <td> holds the label "DIN:" and the next <td> holds the input.
   const handle = await page.evaluateHandle((hint) => {
     const lower = hint.toLowerCase();
 
-    // Strategy 1: label by text → for=id
+    // 1. Try <label for="...">
     const labels = Array.from(document.querySelectorAll("label"));
-    const lbl = labels.find((l) =>
-      (l.textContent || "").toLowerCase().includes(lower),
-    );
-    if (lbl) {
+    for (const lbl of labels) {
+      const text = (lbl.textContent || "").toLowerCase().trim();
+      if (!text.includes(lower)) continue;
       const forId = lbl.getAttribute("for");
       if (forId) {
         const byId = document.getElementById(forId);
@@ -290,32 +278,55 @@ async function typeFieldByLabel(
           return byId;
         }
       }
-      // Look in the same <td>, then siblings of that <td>, then closest <tr>.
-      const cell = lbl.closest("td,th,div,fieldset");
-      const inSame = cell?.querySelector("input,select");
-      if (inSame) return inSame;
-      const row = lbl.closest("tr");
-      if (row) {
-        const inRow = row.querySelector("input,select");
-        if (inRow) return inRow;
+    }
+
+    // 2. Look for any element whose text ends with the hint + ":" (e.g. "DIN:"),
+    //    then find the nearest input. This catches the DOCCS table layout.
+    const allEls = Array.from(
+      document.querySelectorAll<HTMLElement>("td,th,label,div,span"),
+    );
+    const labelEls = allEls.filter((el) => {
+      // Only direct text containers, not parents of huge trees.
+      const ownText = Array.from(el.childNodes)
+        .filter((n) => n.nodeType === Node.TEXT_NODE)
+        .map((n) => (n.textContent || "").trim())
+        .join(" ");
+      return new RegExp(`\\b${lower}\\b\\s*:?\\s*$`, "i").test(ownText);
+    });
+
+    for (const lblEl of labelEls) {
+      // Try same parent
+      const parent = lblEl.parentElement;
+      if (parent) {
+        const inputs = Array.from(
+          parent.querySelectorAll<HTMLInputElement>("input,select"),
+        );
+        for (const inp of inputs) {
+          if (inp.type !== "hidden" && inp.type !== "radio") return inp;
+        }
       }
-      // Walk forward through following siblings of cell.
-      let sib = cell?.nextElementSibling;
+      // Try next sibling cell
+      let sib = lblEl.nextElementSibling;
       while (sib) {
-        const found = sib.querySelector("input,select");
-        if (found) return found;
+        const inp = sib.querySelector<HTMLInputElement>("input,select");
+        if (inp && inp.type !== "hidden" && inp.type !== "radio") return inp;
         sib = sib.nextElementSibling;
+      }
+      // Try parent row's siblings
+      const row = lblEl.closest("tr");
+      if (row) {
+        const inp = row.querySelector<HTMLInputElement>("input,select");
+        if (inp && inp.type !== "hidden" && inp.type !== "radio") return inp;
       }
     }
 
-    // Strategy 2: placeholder / aria-label / name / id / preceding label text
+    // 3. Fallback: any input whose attributes mention the hint.
     const inputs = Array.from(
-      document.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
-        "input,select",
-      ),
+      document.querySelectorAll<HTMLInputElement>("input"),
     );
     return (
       inputs.find((el) => {
+        if (el.type === "hidden" || el.type === "radio") return false;
         const attrs = [
           el.getAttribute("placeholder"),
           el.getAttribute("aria-label"),
@@ -325,57 +336,58 @@ async function typeFieldByLabel(
         ]
           .filter(Boolean)
           .map((s) => (s as string).toLowerCase());
-        if (attrs.some((a) => a.includes(lower))) return true;
-        // Also check preceding text in the row.
-        const row = el.closest("tr");
-        if (row) {
-          const rowText = (row.textContent || "").toLowerCase();
-          if (rowText.includes(lower)) return true;
-        }
-        return false;
+        return attrs.some((a) => a.includes(lower));
       }) ?? null
     );
   }, labelHint);
 
-  const el = handle.asElement();
-  if (!el) return;
+  const el = handle.asElement() as
+    | import("puppeteer-core").ElementHandle<HTMLInputElement>
+    | null;
+  if (!el) {
+    logger.warn("doccs: input not found", { labelHint });
+    return;
+  }
 
-  // Click to focus (Blazor wires events on the focused element).
+  // Use ElementHandle.type() — handles focus + keystroke events natively.
+  // First clear any existing value via JS, then dispatch input/change so
+  // Blazor's two-way binding picks up the empty state.
   await el.evaluate((node) => {
-    const input = node as HTMLInputElement;
-    input.focus();
-    // Clear via select-all + delete keystrokes so binding fires.
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    setter?.call(node, "");
+    node.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  await (el as import("puppeteer-core").ElementHandle<Element>)
-    .click({ clickCount: 3 })
-    .catch(() => undefined);
-  await page.keyboard.press("Backspace");
+  await el.focus();
+  await el.type(value, { delay: 30 });
 
-  // Type with a small delay to mimic human keystrokes (Blazor binds on input event).
-  await page.keyboard.type(value, { delay: 30 });
-
-  // Verify the value actually stuck. If not, fall back to direct DOM set + dispatch.
+  // Verify the value stuck. If not, set via prototype setter + dispatch.
   const stuck = await el.evaluate(
-    (node, expected) => (node as HTMLInputElement).value === expected,
+    (node, expected) => node.value === expected,
     value,
   );
   if (!stuck) {
+    logger.warn("doccs: typing did not stick, falling back to setter", {
+      labelHint,
+      value,
+    });
     await el.evaluate((node, v) => {
-      const input = node as HTMLInputElement;
       const setter = Object.getOwnPropertyDescriptor(
         HTMLInputElement.prototype,
         "value",
       )?.set;
-      setter?.call(input, v);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
+      setter?.call(node, v);
+      node.dispatchEvent(new Event("input", { bubbles: true }));
+      node.dispatchEvent(new Event("change", { bubbles: true }));
     }, value);
   }
 
-  // Fire change + blur so Blazor's @onchange commits the value.
+  // Always fire change + blur so Blazor commits the value.
   await el.evaluate((node) => {
     node.dispatchEvent(new Event("change", { bubbles: true }));
-    (node as HTMLInputElement).blur();
+    node.blur();
   });
 }
 
@@ -511,6 +523,42 @@ function extractInmateRecordsInBrowser(): InmateRecord[] {
       const rec = buildRecord(raw);
       if (rec) out.push(rec);
     });
+  }
+
+  // Detail page fallback: harvest all "Label: value" pairs from any element
+  // (DOCCS detail page sometimes uses <strong>Label:</strong> value patterns).
+  if (out.length === 0) {
+    const raw: Record<string, string> = {};
+
+    // Walk every block-level element looking for "Label: value" text patterns.
+    const candidates = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        "tr,div,p,li,section,article",
+      ),
+    );
+    for (const el of candidates) {
+      const txt = (el.textContent || "").replace(/\s+/g, " ").trim();
+      const m = txt.match(/^([A-Za-z][A-Za-z /()\-]{1,40}):\s*(.+)$/);
+      if (m) {
+        const k = m[1].trim();
+        const v = m[2].trim();
+        // Skip if the value is itself another label (nested capture).
+        if (v.length < 200 && !raw[k]) raw[k] = v;
+      }
+    }
+
+    // Try to capture the inmate name from the page heading if not in the map.
+    if (!raw["Name"] && !raw["Inmate Name"]) {
+      const h = document.querySelector("h1,h2,h3");
+      const ht = (h?.textContent || "").trim();
+      // Heuristic: "LAST, FIRST [M]" pattern.
+      if (/^[A-Z][A-Z' \-]+,\s+[A-Z]/.test(ht)) {
+        raw["Name"] = ht;
+      }
+    }
+
+    const rec = buildRecord(raw);
+    if (rec) out.push(rec);
   }
 
   // De-duplicate by DIN.
