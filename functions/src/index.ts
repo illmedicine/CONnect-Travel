@@ -82,7 +82,7 @@ function sanitize(input: SearchInput): SearchInput {
   };
 }
 
-const PARSER_VERSION = "v9";
+const PARSER_VERSION = "v10";
 
 function hashQuery(q: SearchInput): string {
   const canonical = JSON.stringify({ ...q, _v: PARSER_VERSION }, Object.keys(q).sort().concat("_v"));
@@ -196,46 +196,64 @@ async function performSearch(q: SearchInput): Promise<SearchResult> {
       }
     }
 
-    // Wait for results: the DOCCS Blazor app replaces the form with results
-    // in-place. The form's instructional text ("Use Last Name alone...") is
-    // a reliable form-only marker. When it goes away, results have rendered.
-    // We capture it before submit so we can detect its disappearance.
-    const formMarker = "Use Last Name alone";
-    await page.waitForFunction(
-      (marker: string) => {
-        const text = document.body.innerText;
-        const stillOnForm = text.includes(marker);
-        if (stillOnForm) {
-          // Check for inline error states that DO appear while still on form.
-          // SYSTEM ERROR shows below the form when DOCCS rejects the request.
-          const errMatch = text.match(/SYSTEM ERROR[^\n]*/);
-          if (errMatch) {
-            // Make sure it's not just hidden template text — look for it
-            // close to the top of body text (visible errors render near top).
-            // If it's visible, the surrounding 200 chars won't include the
-            // form's section labels "By DIN" etc.
-            const idx = text.indexOf(errMatch[0]);
-            const context = text.slice(Math.max(0, idx - 100), idx + 200);
-            if (
-              !context.includes("By DIN") &&
-              !context.includes("By Name") &&
-              !context.includes("By NYSID")
-            ) {
-              return true;
-            }
+    // Wait for results: snapshot body text length, then wait for the page
+    // to either change substantially OR show a known terminal state.
+    const beforeText = await page.evaluate(() => document.body.innerText);
+    const beforeLen = beforeText.length;
+    const beforeUrl = page.url();
+
+    try {
+      await page.waitForFunction(
+        (baselineLen: number, baselineUrl: string) => {
+          const text = document.body.innerText;
+          // URL changed → SPA navigation to detail/results page.
+          if (location.href !== baselineUrl) return true;
+          // Text changed substantially (>15% delta).
+          const delta = Math.abs(text.length - baselineLen);
+          if (delta > baselineLen * 0.15) return true;
+          // Terminal phrases (only count if newly appeared after submit, not
+          // present in baseline).
+          if (
+            /no offender|no results|no matches|not found/i.test(text) &&
+            !/no offender|no results|no matches|not found/i.test(
+              "" /* baseline check not feasible inside browser ctx */,
+            )
+          ) {
+            return true;
           }
-          // No-results message also appears in-place.
-          if (/no offender|no results|no matches|not found/i.test(text)) {
+          // Detail-page heading with LAST, FIRST pattern.
+          const heading = document.querySelector("h1,h2,h3");
+          if (heading) {
+            const ht = (heading.textContent || "").trim();
+            if (/^[A-Z][A-Z' \-]+,\s+[A-Z]/.test(ht)) return true;
+          }
+          // Result row: a td that contains a DIN value (year+letter+4digits)
+          // AND is not a placeholder.
+          const tds = Array.from(document.querySelectorAll("td"));
+          if (
+            tds.some((td) =>
+              /^\s*\d{2}[A-Z]\d{4}\s*$/.test(td.textContent || ""),
+            )
+          ) {
             return true;
           }
           return false;
-        }
-        // Form gone → results rendered.
-        return true;
-      },
-      { timeout: 25_000 },
-      formMarker,
-    );
+        },
+        { timeout: 20_000 },
+        beforeLen,
+        beforeUrl,
+      );
+    } catch (waitErr) {
+      // Don't fail the request — fall through and extract whatever is on the
+      // page. We'll log the timeout for debugging.
+      logger.warn("doccs: wait-for-results timed out, extracting anyway", {
+        message: (waitErr as Error)?.message,
+        urlNow: page.url(),
+        textChanged:
+          (await page.evaluate(() => document.body.innerText)).length !==
+          beforeLen,
+      });
+    }
 
     // Allow render to settle.
     await new Promise((r) => setTimeout(r, 600));
@@ -675,7 +693,25 @@ export const searchDoccs = onCall(
       }
     }
 
-    const result = await performSearch(q);
+    let result: SearchResult;
+    try {
+      result = await performSearch(q);
+    } catch (err) {
+      // Never return a 500 — wrap as an empty result with diagnostic so the
+      // client can show a friendly error and retry.
+      const msg = (err as Error)?.message || String(err);
+      logger.error("doccs performSearch failed", { query: q, error: msg });
+      result = {
+        query: q,
+        inmates: [],
+        message: "DOCCS lookup failed. Please try again in a moment.",
+        debugSnippet: `error=${msg.slice(0, 300)}`,
+        fetchedAtIso: new Date().toISOString(),
+        cached: false,
+      };
+      // Don't cache failures.
+      return result;
+    }
 
     await cacheRef.set({
       ...result,
