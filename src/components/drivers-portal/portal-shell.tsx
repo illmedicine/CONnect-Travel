@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import DriverDashboardPanel from "@/components/drivers-portal/driver-dashboard-panel";
+import { DriverDashboard } from "@/components/driver/driver-dashboard";
 import {
   ensureDriverRecord,
   isRegisteredDriver,
@@ -128,56 +129,65 @@ function SignInScreen({
   error: string | null;
 }) {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-primary-dark via-primary to-primary-light text-white">
-      <div className="max-w-md mx-auto px-6 py-10 flex flex-col min-h-screen">
-        <div className="text-center mt-6">
-          <p className="text-xs uppercase tracking-widest text-white/70">
-            ConNetwork Travel
-          </p>
-          <h1 className="mt-2 text-3xl font-bold">Drivers Portal</h1>
-          <p className="mt-2 text-sm text-white/80">
-            Pick up trips, message riders, and share live GPS once your trip
-            window opens.
-          </p>
-        </div>
-
-        <div className="mt-10 bg-white text-gray-800 rounded-2xl shadow-xl p-6">
-          <h2 className="font-bold text-primary-dark text-lg">
-            Sign in with your driver Google account
-          </h2>
-          <p className="mt-1 text-sm text-gray-600">
-            Use the email dispatch has on file. New driver?{" "}
-            <a
-              href="mailto:dispatch@connetworktravel.com"
-              className="text-primary font-semibold underline"
-            >
-              Contact dispatch
-            </a>
-            .
-          </p>
-
-          <button
-            onClick={onSignIn}
-            disabled={signingIn}
-            className="mt-6 w-full inline-flex items-center justify-center gap-3 bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-60 text-gray-800 font-semibold py-3 rounded-full shadow-sm transition-colors"
-          >
-            <GoogleGlyph className="w-5 h-5" />
-            {signingIn ? "Opening Google…" : "Continue with Google"}
-          </button>
-
-          {error && (
-            <p className="mt-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">
-              {error}
+    <div className="min-h-screen bg-surface">
+      {/* Hero / sign-in CTA */}
+      <div className="bg-gradient-to-b from-primary-dark via-primary to-primary-light text-white">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12 grid md:grid-cols-2 gap-8 items-center">
+          <div>
+            <p className="text-xs uppercase tracking-widest text-white/70">
+              ConNetwork Travel
             </p>
-          )}
-        </div>
+            <h1 className="mt-2 text-3xl md:text-4xl font-bold">
+              Drivers Portal
+            </h1>
+            <p className="mt-3 text-white/85 max-w-md">
+              Pick up trips, message riders, and share live GPS once your trip
+              window opens. Earn up to <strong>$540 per trip</strong> driving
+              families to Western NY correctional facilities.
+            </p>
+          </div>
 
-        <div className="mt-auto text-center text-xs text-white/70 pt-10">
-          <p>
-            $1 one-time download · free updates · Google Play release in
-            progress
-          </p>
+          <div className="bg-white text-gray-800 rounded-2xl shadow-xl p-6">
+            <h2 className="font-bold text-primary-dark text-lg">
+              Sign in with your driver Google account
+            </h2>
+            <p className="mt-1 text-sm text-gray-600">
+              Use the email dispatch has on file. New driver?{" "}
+              <a
+                href="mailto:dispatch@connetworktravel.com"
+                className="text-primary font-semibold underline"
+              >
+                Contact dispatch
+              </a>
+              .
+            </p>
+
+            <button
+              onClick={onSignIn}
+              disabled={signingIn}
+              className="mt-6 w-full inline-flex items-center justify-center gap-3 bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-60 text-gray-800 font-semibold py-3 rounded-full shadow-sm transition-colors"
+            >
+              <GoogleGlyph className="w-5 h-5" />
+              {signingIn ? "Opening Google…" : "Continue with Google"}
+            </button>
+
+            {error && (
+              <p className="mt-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">
+                {error}
+              </p>
+            )}
+          </div>
         </div>
+      </div>
+
+      {/* Public preview of the driver dashboard (sample data) */}
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <strong>Preview:</strong> Sample trips below are for illustration.
+          Sign in with your driver Google account to see live trip requests
+          from real riders.
+        </div>
+        <DriverDashboard />
       </div>
     </div>
   );

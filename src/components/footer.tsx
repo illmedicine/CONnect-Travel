@@ -31,7 +31,7 @@ export function Footer() {
                 </Link>
               </li>
               <li>
-                <Link href="/driver" className="hover:text-accent transition-colors">
+                <Link href="/driversportal" className="hover:text-accent transition-colors">
                   Become a Driver
                 </Link>
               </li>

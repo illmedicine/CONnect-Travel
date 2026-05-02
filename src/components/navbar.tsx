@@ -71,12 +71,6 @@ export function Navbar() {
               Knowledge
             </Link>
             <Link
-              href="/driver"
-              className="hover:text-accent transition-colors"
-            >
-              Drive With Us
-            </Link>
-            <Link
               href="/driversportal"
               className="hover:text-accent transition-colors"
             >
@@ -169,13 +163,6 @@ export function Navbar() {
             onClick={() => setMenuOpen(false)}
           >
             Knowledge
-          </Link>
-          <Link
-            href="/driver"
-            className="block py-2 hover:text-accent"
-            onClick={() => setMenuOpen(false)}
-          >
-            Drive With Us
           </Link>
           <Link
             href="/driversportal"

@@ -1,17 +1,21 @@
-import { DriverDashboard } from "@/components/driver/driver-dashboard";
+"use client";
 
-export const metadata = {
-  title: "Driver Portal — Connect Travel",
-  description:
-    "Earn up to $540 per trip driving families to Western NY correctional facilities. Join the Connect Travel driver network.",
-};
+import { useEffect } from "react";
 
-export default function DriverPage() {
+// The Driver Dashboard now lives under /driversportal. This page redirects
+// any old links/bookmarks to the new location. We use client-side navigation
+// because the site is exported as static HTML (no server redirects).
+export default function DriverRedirectPage() {
+  useEffect(() => {
+    // Honor the GitHub Pages basePath ("/CONnect-Travel"). Use a relative
+    // hop so it works in any deployment environment.
+    const target = window.location.pathname.replace(/\/driver\/?$/, "/driversportal/");
+    window.location.replace(target);
+  }, []);
+
   return (
-    <div className="min-h-screen bg-surface">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <DriverDashboard />
-      </div>
+    <div className="min-h-screen flex items-center justify-center bg-surface text-gray-500 text-sm">
+      Redirecting to the Drivers Portal…
     </div>
   );
 }

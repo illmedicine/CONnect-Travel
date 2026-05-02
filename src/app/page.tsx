@@ -137,7 +137,7 @@ export default function HomePage() {
             your routes.
           </p>
           <Link
-            href="/driver"
+            href="/driversportal"
             className="mt-8 inline-flex items-center justify-center bg-accent hover:bg-accent-light text-primary-dark font-bold px-8 py-4 rounded-xl text-lg transition-colors shadow-lg"
           >
             Start Driving Today

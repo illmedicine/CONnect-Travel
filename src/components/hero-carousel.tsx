@@ -178,7 +178,7 @@ export default function HeroCarousel() {
                 Book a Ride — $50 per seat
               </Link>
               <Link
-                href="/driver"
+                href="/driversportal"
                 className="inline-flex items-center justify-center border-2 border-white/40 hover:border-accent hover:bg-white/5 text-white font-semibold px-8 py-4 rounded-xl text-lg transition-colors backdrop-blur-sm"
               >
                 Become a Driver
