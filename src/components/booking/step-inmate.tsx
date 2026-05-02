@@ -23,7 +23,7 @@ const DIN_PATTERN = /^\d{2}[A-Z]\d{4}$/;
 type Mode = "din" | "name" | "browse";
 
 export function StepInmate({ data, updateData, onNext, onBack }: Props) {
-  const [mode, setMode] = useState<Mode>("din");
+  const [mode, setMode] = useState<Mode>("browse");
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<DoccsInmateRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,6 +39,11 @@ export function StepInmate({ data, updateData, onNext, onBack }: Props) {
   const [middleInitial, setMiddleInitial] = useState("");
   const [suffix, setSuffix] = useState("");
   const [birthYear, setBirthYear] = useState("");
+
+  // Browse-mode manual entry fields (used when user reads data off the
+  // official DOCCS site and types it in here).
+  const [manualName, setManualName] = useState(data.inmateName || "");
+  const [manualFacility, setManualFacility] = useState("");
 
   useEffect(
     () =>
@@ -156,6 +161,16 @@ export function StepInmate({ data, updateData, onNext, onBack }: Props) {
 
       <div className="flex gap-2 mb-4">
         <button
+          onClick={() => setMode("browse")}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            mode === "browse"
+              ? "bg-primary text-white"
+              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+          }`}
+        >
+          Browse DOCCS ↗ (recommended)
+        </button>
+        <button
           onClick={() => setMode("din")}
           className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
             mode === "din"
@@ -163,7 +178,7 @@ export function StepInmate({ data, updateData, onNext, onBack }: Props) {
               : "bg-gray-100 text-gray-600 hover:bg-gray-200"
           }`}
         >
-          By DIN
+          Auto-search by DIN
         </button>
         <button
           onClick={() => setMode("name")}
@@ -173,17 +188,7 @@ export function StepInmate({ data, updateData, onNext, onBack }: Props) {
               : "bg-gray-100 text-gray-600 hover:bg-gray-200"
           }`}
         >
-          By Name
-        </button>
-        <button
-          onClick={() => setMode("browse")}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            mode === "browse"
-              ? "bg-primary text-white"
-              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-          }`}
-        >
-          Browse DOCCS ↗
+          Auto-search by Name
         </button>
       </div>
 
@@ -255,13 +260,15 @@ export function StepInmate({ data, updateData, onNext, onBack }: Props) {
           </div>
         </div>
       ) : (
-        // Browse DOCCS mode — open live site in new tab, paste DIN back.
+        // Browse DOCCS mode — user opens live site, then types the DIN +
+        // name + facility back here. No Cloud Function call; this always
+        // works regardless of headless-scrape status.
         <div className="space-y-4">
           <div className="rounded-xl border-2 border-dashed border-primary/30 bg-primary/5 p-5">
             <p className="text-sm text-gray-700 leading-relaxed">
-              The official NYS DOCCS lookup blocks direct embedding for security
-              reasons. Open it in a new tab, find the person you&apos;re visiting,
-              then copy their <strong>DIN</strong> back here.
+              <strong>Step 1 of 2:</strong> Open the official NYS DOCCS lookup
+              and find your loved one. Note their <strong>DIN</strong>,{" "}
+              <strong>name</strong>, and <strong>housing facility</strong>.
             </p>
             <a
               href="https://nysdoccslookup.doccs.ny.gov/"
@@ -283,49 +290,91 @@ export function StepInmate({ data, updateData, onNext, onBack }: Props) {
                 <path d="M21 14v7H3V3h7" />
               </svg>
             </a>
-            <ol className="mt-4 text-xs text-gray-600 list-decimal list-inside space-y-1">
-              <li>Search by name on the DOCCS site.</li>
-              <li>
-                Click the inmate row and copy the <strong>DIN</strong> (e.g.
-                <span className="font-mono"> 21A1153</span>).
-              </li>
-              <li>Paste it below and we&apos;ll fetch their facility & details.</li>
-            </ol>
           </div>
 
-          <div>
-            <label className="block text-xs text-gray-600 mb-1 font-semibold uppercase tracking-wider">
-              Paste DIN here
-            </label>
-            <div className="flex gap-2">
+          <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+            <p className="text-sm font-semibold text-gray-700">
+              Step 2 of 2: Enter their info
+            </p>
+
+            <div>
+              <label className="block text-xs text-gray-600 mb-1 font-semibold uppercase tracking-wider">
+                DIN <span className="text-red-500">*</span>
+              </label>
               <input
                 type="text"
-                placeholder="e.g. 21A1153"
+                placeholder="e.g. 23R2319"
                 maxLength={7}
                 value={dinInput}
                 onChange={(e) => setDinInput(e.target.value.toUpperCase())}
-                className={`flex-1 border rounded-xl px-4 py-3 text-sm font-mono uppercase tracking-wider focus:outline-none focus:ring-2 ${
+                className={`w-full border rounded-xl px-4 py-3 text-sm font-mono uppercase tracking-wider focus:outline-none focus:ring-2 ${
                   dinValid
                     ? "border-gray-200 focus:ring-accent"
                     : "border-red-300 focus:ring-red-300"
                 }`}
               />
-              <button
-                onClick={() => {
-                  setMode("din");
-                  // run search after switching mode
-                  setTimeout(runSearch, 0);
-                }}
-                disabled={!DIN_PATTERN.test(dinInput.toUpperCase()) || searching}
-                className="bg-accent hover:bg-accent/90 disabled:opacity-40 text-white font-semibold px-5 rounded-xl text-sm transition-colors"
-              >
-                Look Up
-              </button>
+              <p className="text-xs text-gray-500 mt-1">
+                Format: 2-digit year + letter + 4 digits.
+              </p>
             </div>
-            <p className="text-xs text-gray-500 mt-1">
-              We&apos;ll cross-reference DOCCS to fill facility, custody status,
-              and visiting info automatically.
-            </p>
+
+            <div>
+              <label className="block text-xs text-gray-600 mb-1 font-semibold uppercase tracking-wider">
+                Full Name <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                placeholder="LAST, FIRST M"
+                value={manualName}
+                onChange={(e) => setManualName(e.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-gray-600 mb-1 font-semibold uppercase tracking-wider">
+                Housing Facility
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. OTISVILLE"
+                value={manualFacility}
+                onChange={(e) =>
+                  setManualFacility(e.target.value.toUpperCase())
+                }
+                className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                We&apos;ll match this to a CONnect Travel facility on the next
+                step.
+              </p>
+            </div>
+
+            <button
+              onClick={() => {
+                setError(null);
+                const din = dinInput.trim().toUpperCase();
+                if (!DIN_PATTERN.test(din)) {
+                  setError("Enter a valid DIN like 23R2319.");
+                  return;
+                }
+                if (manualName.trim().length < 2) {
+                  setError("Enter the inmate's full name.");
+                  return;
+                }
+                const facId = matchFacility(manualFacility);
+                const parts = manualName.split(/[\s,]+/).filter(Boolean);
+                updateData({
+                  inmateDIN: din,
+                  inmateName: manualName.trim(),
+                  inmateLastName: parts[0] || "",
+                  ...(facId ? { facilityId: facId } : {}),
+                });
+              }}
+              className="w-full bg-accent hover:bg-accent/90 text-white font-semibold px-5 py-3 rounded-xl text-sm transition-colors"
+            >
+              Save & Continue
+            </button>
           </div>
         </div>
       )}
