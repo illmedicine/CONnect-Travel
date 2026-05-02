@@ -49,6 +49,14 @@ service cloud.firestore {
           || resource.data.acceptedByDriverId == request.auth.uid
         );
 
+      // Rider can cancel their OWN trip while it's still pending or accepted.
+      // They can only set status='cancelled' — no other field modifications.
+      allow update: if isSignedIn()
+        && resource.data.riderUid == request.auth.uid
+        && (resource.data.status == 'pending' || resource.data.status == 'accepted')
+        && request.resource.data.status == 'cancelled'
+        && request.resource.data.riderUid == resource.data.riderUid;
+
       match /messages/{msgId} {
         function trip() {
           return get(/databases/$(database)/documents/trips/$(tripId)).data;

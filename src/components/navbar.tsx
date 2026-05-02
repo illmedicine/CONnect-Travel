@@ -53,6 +53,12 @@ export function Navbar() {
               Book a Ride
             </Link>
             <Link
+              href="/my-trips"
+              className="hover:text-accent transition-colors"
+            >
+              My Trips
+            </Link>
+            <Link
               href="/facilities"
               className="hover:text-accent transition-colors"
             >
@@ -142,6 +148,13 @@ export function Navbar() {
             onClick={() => setMenuOpen(false)}
           >
             Book a Ride
+          </Link>
+          <Link
+            href="/my-trips"
+            className="block py-2 hover:text-accent"
+            onClick={() => setMenuOpen(false)}
+          >
+            My Trips
           </Link>
           <Link
             href="/facilities"

@@ -201,6 +201,33 @@ export async function createTripRequest(
   return created.id;
 }
 
+/**
+ * Live subscription to all trips a rider has booked, ordered by visit date
+ * descending (most recent first). Filters by their auth uid.
+ */
+export function subscribeRiderTrips(
+  riderUid: string,
+  cb: (trips: TripRequest[]) => void,
+): () => void {
+  const db = getFirestoreDb();
+  const col = collection(db, "trips");
+  const q = query(col, where("riderUid", "==", riderUid));
+  return onSnapshot(q, (snap) => {
+    const trips = snap.docs.map(tripFromDoc);
+    trips.sort((a, b) => b.visitDateIso.localeCompare(a.visitDateIso));
+    cb(trips);
+  });
+}
+
+export async function cancelTripByRider(id: string): Promise<void> {
+  const db = getFirestoreDb();
+  await updateDoc(doc(db, "trips", id), {
+    status: "cancelled",
+    cancelledAt: serverTimestamp(),
+    cancelledByRider: true,
+  });
+}
+
 // ── Messages ───────────────────────────────────────────────────────────
 
 export function subscribeMessages(
