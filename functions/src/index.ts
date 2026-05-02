@@ -82,7 +82,7 @@ function sanitize(input: SearchInput): SearchInput {
   };
 }
 
-const PARSER_VERSION = "v10";
+const PARSER_VERSION = "v11";
 
 function hashQuery(q: SearchInput): string {
   const canonical = JSON.stringify({ ...q, _v: PARSER_VERSION }, Object.keys(q).sort().concat("_v"));
@@ -154,46 +154,32 @@ async function performSearch(q: SearchInput): Promise<SearchResult> {
     logger.info("doccs form state before submit", { query: q, formState });
 
     // Give Blazor a moment to process any pending state updates from typing.
-    await new Promise((r) => setTimeout(r, 800));
+    await new Promise((r) => setTimeout(r, 1200));
 
-    // Submit. Blazor forms reliably respond to Enter while focus is in the
-    // form. Press Enter first; if that doesn't navigate, click Search.
-    await page.keyboard.press("Enter");
-    await new Promise((r) => setTimeout(r, 600));
-
-    // If still on form (no SYSTEM ERROR / results / nav change), click button.
-    const stillOnForm = await page.evaluate(() => {
-      const t = document.body.innerText.toLowerCase();
-      return (
-        !t.includes("start a new search") &&
-        !t.includes("system error") &&
-        !t.includes("no offender") &&
-        !t.includes("no results")
+    // Click the Search button — most reliable with Blazor (Enter sometimes
+    // submits a different form action).
+    const submitted = await page.evaluate(() => {
+      const all = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          'button, input[type="submit"], input[type="button"]',
+        ),
       );
-    });
-    if (stillOnForm) {
-      const submitted = await page.evaluate(() => {
-        const all = Array.from(
-          document.querySelectorAll<HTMLElement>(
-            'button, input[type="submit"], input[type="button"]',
-          ),
-        );
-        const btn = all.find((b) => {
-          const text =
-            b.tagName === "INPUT"
-              ? (b as HTMLInputElement).value
-              : b.textContent || "";
-          return /^\s*search\s*$/i.test(text);
-        });
-        if (btn) {
-          (btn as HTMLElement).click();
-          return true;
-        }
-        return false;
+      const btn = all.find((b) => {
+        const text =
+          b.tagName === "INPUT"
+            ? (b as HTMLInputElement).value
+            : b.textContent || "";
+        return /^\s*search\s*$/i.test(text);
       });
-      if (!submitted) {
-        logger.warn("doccs: search button not found");
+      if (btn) {
+        (btn as HTMLElement).click();
+        return true;
       }
+      return false;
+    });
+    if (!submitted) {
+      logger.warn("doccs: search button not found, pressing Enter");
+      await page.keyboard.press("Enter");
     }
 
     // Wait for results: snapshot body text length, then wait for the page
@@ -256,7 +242,7 @@ async function performSearch(q: SearchInput): Promise<SearchResult> {
     }
 
     // Allow render to settle.
-    await new Promise((r) => setTimeout(r, 600));
+    await new Promise((r) => setTimeout(r, 1500));
 
     const inmates = await page.evaluate(extractInmateRecordsInBrowser);
     let message: string | undefined;
@@ -402,46 +388,18 @@ async function typeFieldByLabel(
     return;
   }
 
-  // Clear any existing value.
-  await page.evaluate((sel) => {
-    const node = document.querySelector<HTMLInputElement>(sel);
-    if (!node) return;
-    const setter = Object.getOwnPropertyDescriptor(
-      HTMLInputElement.prototype,
-      "value",
-    )?.set;
-    setter?.call(node, "");
-    node.dispatchEvent(new Event("input", { bubbles: true }));
-  }, selector);
-
-  // Click via selector (Puppeteer re-queries the DOM, immune to re-render).
-  await page.click(selector);
-
-  // Type one char at a time via page.type. Puppeteer's page.type re-queries
-  // the selector before each key, so it survives Blazor re-renders.
-  await page.type(selector, value, { delay: 80 });
-
-  // Force-set the value via the prototype setter to guarantee the DOM node
-  // (which Blazor reads from) has the full string, and dispatch input+change
-  // so Blazor's @bind handlers fire. This is belt-and-suspenders for cases
-  // where keystroke events were dropped during a re-render.
-  await page.evaluate(
-    (sel, v) => {
-      const node = document.querySelector<HTMLInputElement>(sel);
-      if (!node) return;
-      const setter = Object.getOwnPropertyDescriptor(
-        HTMLInputElement.prototype,
-        "value",
-      )?.set;
-      setter?.call(node, v);
-      node.dispatchEvent(new Event("input", { bubbles: true }));
-      node.dispatchEvent(new Event("change", { bubbles: true }));
-    },
-    selector,
-    value,
-  );
-
-  // Tab to commit (fires blur/change, which is the default Blazor @bind event).
+  // Simplest possible human-like interaction: focus, type each key with a
+  // realistic delay, then Tab to commit. No setter, no manual events.
+  // Blazor binds on the `change` event (default) which Tab/blur fires
+  // naturally. Synthetic value-setter approaches sometimes cause Blazor to
+  // throw a system error, so we avoid them.
+  await page.focus(selector);
+  // Clear any existing value with select-all + delete (real keystrokes).
+  await page.keyboard.down("Control");
+  await page.keyboard.press("KeyA");
+  await page.keyboard.up("Control");
+  await page.keyboard.press("Delete");
+  await page.keyboard.type(value, { delay: 100 });
   await page.keyboard.press("Tab");
 }
 
