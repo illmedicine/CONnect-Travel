@@ -82,7 +82,7 @@ function sanitize(input: SearchInput): SearchInput {
   };
 }
 
-const PARSER_VERSION = "v12";
+const PARSER_VERSION = "v13";
 
 function hashQuery(q: SearchInput): string {
   const canonical = JSON.stringify({ ...q, _v: PARSER_VERSION }, Object.keys(q).sort().concat("_v"));
@@ -136,6 +136,41 @@ async function performSearch(q: SearchInput): Promise<SearchResult> {
       window.chrome = { runtime: {} };
     });
     await page.goto(LOOKUP_URL, { waitUntil: "networkidle2", timeout: 30_000 });
+
+    // Capture every XHR/fetch DOCCS makes after submit so we can see what
+    // their API actually returns (and possibly call it directly later).
+    const apiResponses: Array<{
+      url: string;
+      status: number;
+      bodySnippet?: string;
+    }> = [];
+    page.on("response", async (resp) => {
+      try {
+        const url = resp.url();
+        // Skip static asset noise.
+        if (
+          /\.(js|css|woff2?|png|jpg|svg|ico)(\?|$)/i.test(url) ||
+          url.includes("/_framework/") ||
+          url.includes("/_content/")
+        ) {
+          return;
+        }
+        if (url === LOOKUP_URL) return;
+        const ct = resp.headers()["content-type"] || "";
+        let bodySnippet: string | undefined;
+        if (ct.includes("json") || ct.includes("text") || ct.includes("xml")) {
+          try {
+            const t = await resp.text();
+            bodySnippet = t.slice(0, 600);
+          } catch {
+            // ignore
+          }
+        }
+        apiResponses.push({ url, status: resp.status(), bodySnippet });
+      } catch {
+        // ignore
+      }
+    });
 
     // Wait for the Blazor app to render the search form.
     await page.waitForSelector("input", { timeout: 25_000 });
@@ -290,7 +325,11 @@ async function performSearch(q: SearchInput): Promise<SearchResult> {
       });
       message = debug.msg ?? "No records returned.";
       debugSnippet = `tables=${debug.tableCount} url=${debug.url} text="${debug.snippet.replace(/\s+/g, " ").slice(0, 400)}"`;
-      logger.info("doccs empty result", { query: q, debug });
+      logger.info("doccs empty result", {
+        query: q,
+        debug,
+        apiResponses: apiResponses.slice(-15),
+      });
     }
 
     return {
