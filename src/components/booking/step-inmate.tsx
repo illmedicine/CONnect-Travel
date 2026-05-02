@@ -56,13 +56,18 @@ export function StepInmate({ data, updateData, onNext, onBack }: Props) {
     setResults(null);
 
     let payload: DoccsSearchInput;
-    if (mode === "din") {
-      const din = dinInput.toUpperCase();
-      if (!DIN_PATTERN.test(din)) {
+    // If the DIN field has a valid value, use it regardless of which tab is
+    // currently selected — this prevents accidental "Last name required"
+    // errors when the user has typed a DIN but the mode state is stale.
+    const dinTrimmed = dinInput.trim().toUpperCase();
+    const dinIsValid = DIN_PATTERN.test(dinTrimmed);
+
+    if (mode === "din" || dinIsValid) {
+      if (!dinIsValid) {
         setError("Enter a valid DIN like 24B1234.");
         return;
       }
-      payload = { din };
+      payload = { din: dinTrimmed };
     } else {
       if (!lastName.trim()) {
         setError("Last name is required.");

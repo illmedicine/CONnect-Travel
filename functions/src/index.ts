@@ -82,7 +82,7 @@ function sanitize(input: SearchInput): SearchInput {
   };
 }
 
-const PARSER_VERSION = "v11";
+const PARSER_VERSION = "v12";
 
 function hashQuery(q: SearchInput): string {
   const canonical = JSON.stringify({ ...q, _v: PARSER_VERSION }, Object.keys(q).sort().concat("_v"));
@@ -108,6 +108,33 @@ async function performSearch(q: SearchInput): Promise<SearchResult> {
     await page.setUserAgent(
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     );
+    await page.setExtraHTTPHeaders({
+      "Accept-Language": "en-US,en;q=0.9",
+      Accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      "Sec-Ch-Ua":
+        '"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"',
+      "Sec-Ch-Ua-Mobile": "?0",
+      "Sec-Ch-Ua-Platform": '"Windows"',
+    });
+    // Hide common headless/automation fingerprints before any page script runs.
+    await page.evaluateOnNewDocument(() => {
+      // navigator.webdriver → undefined
+      Object.defineProperty(navigator, "webdriver", {
+        get: () => undefined,
+      });
+      // languages
+      Object.defineProperty(navigator, "languages", {
+        get: () => ["en-US", "en"],
+      });
+      // plugins (non-empty)
+      Object.defineProperty(navigator, "plugins", {
+        get: () => [1, 2, 3, 4, 5],
+      });
+      // chrome runtime stub
+      // @ts-expect-error stub
+      window.chrome = { runtime: {} };
+    });
     await page.goto(LOOKUP_URL, { waitUntil: "networkidle2", timeout: 30_000 });
 
     // Wait for the Blazor app to render the search form.
